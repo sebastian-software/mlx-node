@@ -1,19 +1,57 @@
 {
   "name": "mlx-node",
-  "version": "1.0.0",
-  "description": "Node.js bindings for MLX (Apple's ML framework)",
-  "main": "dist/index.js",
+  "version": "0.1.0",
+  "description": "Node.js bindings for MLX (Apple's ML framework for Apple Silicon)",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
   "type": "module",
   "scripts": {
-    "build": "tsc",
-    "test-parser": "tsc && node dist/test-parser.js",
-    "generate": "tsc && node dist/generate.js"
+    "build:ts": "tsc",
+    "build:native": "cmake-js compile",
+    "build:native:debug": "cmake-js compile --debug",
+    "build": "npm run generate && npm run build:native",
+    "rebuild": "cmake-js rebuild",
+    "clean": "cmake-js clean && rm -rf dist generated",
+    "generate": "npm run build:ts && node dist/generate.js",
+    "test-parser": "npm run build:ts && node dist/test-parser.js",
+    "test": "node --test test/",
+    "prepare": "npm run build",
+    "install": "cmake-js compile"
   },
-  "keywords": ["mlx", "machine-learning", "apple-silicon"],
+  "keywords": [
+    "mlx",
+    "machine-learning",
+    "apple-silicon",
+    "neural-network",
+    "gpu",
+    "metal",
+    "native"
+  ],
   "author": "",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/user/mlx-node.git"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64",
+    "x64"
+  ],
   "devDependencies": {
     "@types/node": "^22.0.0",
     "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "cmake-js": "^7.4.0",
+    "node-addon-api": "^8.5.0"
+  },
+  "binary": {
+    "napi_versions": [8]
   }
 }
