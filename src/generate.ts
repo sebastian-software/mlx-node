@@ -12,6 +12,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { NanobindRegexParser, type Binding } from './parser/regex-parser.js';
 import { TypeScriptGenerator } from './generator/ts-generator.js';
+import { NapiGenerator } from './generator/napi-generator.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -96,6 +97,24 @@ async function main() {
   const mdPath = join(config.outputDir, 'API.md');
   writeFileSync(mdPath, generateMarkdownDocs(allBindings));
   console.log(`  Written: ${mdPath}`);
+
+  // Generate N-API C++ bindings
+  console.log('\n=== Generating N-API C++ Bindings ===\n');
+
+  const napiGenerator = new NapiGenerator({
+    includeComments: true,
+    namespace: 'mlx_node',
+  });
+
+  const bindingCpp = napiGenerator.generateBindingCpp(allBindings);
+  const bindingCppPath = join(config.outputDir, 'binding.cpp');
+  writeFileSync(bindingCppPath, bindingCpp);
+  console.log(`  Written: ${bindingCppPath}`);
+
+  const bindingH = napiGenerator.generateBindingHeader(allBindings);
+  const bindingHPath = join(config.outputDir, 'binding.h');
+  writeFileSync(bindingHPath, bindingH);
+  console.log(`  Written: ${bindingHPath}`);
 
   console.log('\n=== Done ===\n');
 }
