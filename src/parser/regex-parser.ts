@@ -16,11 +16,29 @@ export interface FunctionBinding {
   rawDefinition: string;
 }
 
+export interface MethodBinding {
+  name: string;
+  cppMethod?: string;
+  signature?: string;
+  docstring?: string;
+  isStatic: boolean;
+  isConstructor: boolean;
+}
+
+export interface PropertyBinding {
+  name: string;
+  readonly: boolean;
+  docstring?: string;
+}
+
 export interface ClassBinding {
   type: 'class';
   name: string;
   cppClass: string;
   docstring?: string;
+  methods: MethodBinding[];
+  properties: PropertyBinding[];
+  constructors: MethodBinding[];
 }
 
 export interface EnumBinding {
@@ -110,33 +128,279 @@ export class NanobindRegexParser {
 
   private parseClasses(code: string): ClassBinding[] {
     const classes: ClassBinding[] = [];
+    const classVars: Map<string, ClassBinding> = new Map();
 
     // Match nb::class_<CppType>(m, "PyName", ...)
-    const classPattern = /nb::class_<([^>]+)>\s*\(\s*\w+\s*,\s*"([^"]+)"/g;
+    // Also capture optional variable assignment: auto/const varname = nb::class_<...>
+    const classPattern = /(?:(?:auto|const\s+auto)\s+(\w+)\s*=\s*)?nb::class_<([^>]+)>\s*\(\s*\w+\s*,\s*"([^"]+)"/g;
     let match;
 
     while ((match = classPattern.exec(code)) !== null) {
+      const varName = match[1]; // May be undefined if no variable assignment
+      const cppClass = match[2];
+      const pyName = match[3];
       const startPos = match.index;
-      const fullDef = this.extractBalancedParens(code, code.indexOf('(', startPos));
+
+      // Find the entire class definition chain (including all .def() calls)
+      const classChain = this.extractClassChain(code, startPos);
 
       const binding: ClassBinding = {
         type: 'class',
-        name: match[2],
-        cppClass: match[1],
+        name: pyName,
+        cppClass: cppClass,
+        methods: [],
+        properties: [],
+        constructors: [],
       };
 
-      // Extract docstring
-      if (fullDef) {
-        const docMatch = fullDef.match(/R"pbdoc\(([\s\S]*?)\)pbdoc"/);
+      if (classChain) {
+        // Extract docstring from initial class definition
+        const docMatch = classChain.match(/R"pbdoc\(([\s\S]*?)\)pbdoc"/);
         if (docMatch) {
           binding.docstring = docMatch[1].trim();
         }
+
+        // Parse methods: .def("name", ...)
+        this.parseClassMethods(classChain, binding);
+
+        // Parse properties: .def_prop_ro("name", ...) / .def_prop_rw("name", ...)
+        this.parseClassProperties(classChain, binding);
+
+        // Parse constructors: .def(nb::init<...>())
+        this.parseClassConstructors(classChain, binding);
+      }
+
+      // Track variable name for later method additions
+      if (varName) {
+        classVars.set(varName, binding);
       }
 
       classes.push(binding);
     }
 
+    // Find additional method chains added via variable references
+    // Pattern: varname.def(...) or varname\n    .def(...)
+    for (const [varName, binding] of classVars) {
+      // Find patterns like: varname.def(...) or varname\s+.def(...)
+      const varMethodPattern = new RegExp(
+        `${varName}\\s*\\.def`,
+        'g'
+      );
+      let varMatch;
+      while ((varMatch = varMethodPattern.exec(code)) !== null) {
+        // Extract the method chain starting from this position
+        const chainStart = varMatch.index + varName.length;
+        // Find the first .def( and extract from there
+        const dotPos = code.indexOf('.', chainStart);
+        if (dotPos !== -1) {
+          const methodChain = this.extractMethodChain(code, dotPos);
+          if (methodChain) {
+            this.parseClassMethods(methodChain, binding);
+            this.parseClassProperties(methodChain, binding);
+            this.parseClassConstructors(methodChain, binding);
+          }
+        }
+      }
+    }
+
     return classes;
+  }
+
+  /**
+   * Extract a chain of method calls starting from a dot position
+   */
+  private extractMethodChain(code: string, dotPos: number): string | null {
+    let pos = dotPos;
+    let result = '';
+
+    while (pos < code.length) {
+      // Should be at a '.'
+      if (code[pos] !== '.') break;
+
+      // Find the method name and opening paren
+      const methodMatch = code.slice(pos).match(/^\.(\w+)\s*\(/);
+      if (!methodMatch) break;
+
+      result += code.slice(pos, pos + methodMatch[0].length - 1);
+      pos += methodMatch[0].length - 1;
+
+      // Extract balanced parentheses
+      const parenContent = this.extractBalancedParens(code, pos);
+      if (!parenContent) break;
+
+      result += parenContent;
+      pos += parenContent.length;
+
+      // Skip whitespace
+      while (pos < code.length && /\s/.test(code[pos])) pos++;
+
+      // Check if chain continues
+      if (code[pos] !== '.') break;
+    }
+
+    return result || null;
+  }
+
+  private extractClassChain(code: string, startPos: number): string | null {
+    // Find the nb::class_<...>(...) part first
+    const parenStart = code.indexOf('(', startPos);
+    if (parenStart === -1) return null;
+
+    let pos = parenStart;
+    let result = code.slice(startPos, parenStart);
+
+    // Keep consuming .xxx(...) chains
+    while (pos < code.length) {
+      const parenContent = this.extractBalancedParens(code, pos);
+      if (!parenContent) break;
+
+      result += parenContent;
+      pos += parenContent.length;
+
+      // Skip whitespace
+      while (pos < code.length && /\s/.test(code[pos])) pos++;
+
+      // Check for continuation with .
+      if (code[pos] === '.') {
+        // Find the method name
+        const methodMatch = code.slice(pos).match(/^\.(\w+)\s*\(/);
+        if (methodMatch) {
+          result += code.slice(pos, pos + methodMatch[0].length - 1);
+          pos += methodMatch[0].length - 1;
+        } else {
+          break;
+        }
+      } else {
+        break;
+      }
+    }
+
+    return result;
+  }
+
+  private parseClassMethods(classChain: string, binding: ClassBinding): void {
+    // Match .def("name", ...) but not .def_prop_ro, .def_static, etc.
+    const methodPattern = /\.def\s*\(\s*"([^"]+)"/g;
+    let match;
+
+    while ((match = methodPattern.exec(classChain)) !== null) {
+      // Skip patterns like .def_ro, .def_rw, .def_static, .def_prop_ro, etc.
+      if (classChain.slice(match.index, match.index + 5).match(/\.def_/)) continue;
+
+      const methodStart = match.index;
+      const methodDef = this.extractBalancedParens(classChain, classChain.indexOf('(', methodStart));
+
+      const method: MethodBinding = {
+        name: match[1],
+        isStatic: false,
+        isConstructor: false,
+      };
+
+      if (methodDef) {
+        // Extract C++ method reference
+        const cppMatch = methodDef.match(/&(\w+(?:::\w+)*)/);
+        if (cppMatch) {
+          method.cppMethod = cppMatch[1];
+        }
+
+        // Extract docstring
+        const docMatch = methodDef.match(/R"pbdoc\(([\s\S]*?)\)pbdoc"/);
+        if (docMatch) {
+          method.docstring = docMatch[1].trim();
+        }
+
+        // Extract signature
+        const sigMatch = methodDef.match(/nb::sig\s*\(\s*"([^"]+)"\s*\)/);
+        if (sigMatch) {
+          method.signature = sigMatch[1];
+        }
+      }
+
+      binding.methods.push(method);
+    }
+
+    // Match .def_static("name", ...)
+    const staticPattern = /\.def_static\s*\(\s*"([^"]+)"/g;
+    while ((match = staticPattern.exec(classChain)) !== null) {
+      const methodStart = match.index;
+      const methodDef = this.extractBalancedParens(classChain, classChain.indexOf('(', methodStart));
+
+      const method: MethodBinding = {
+        name: match[1],
+        isStatic: true,
+        isConstructor: false,
+      };
+
+      if (methodDef) {
+        const docMatch = methodDef.match(/R"pbdoc\(([\s\S]*?)\)pbdoc"/);
+        if (docMatch) {
+          method.docstring = docMatch[1].trim();
+        }
+      }
+
+      binding.methods.push(method);
+    }
+  }
+
+  private parseClassProperties(classChain: string, binding: ClassBinding): void {
+    // Match .def_prop_ro("name", ...) and .def_prop_rw("name", ...)
+    const propPattern = /\.def_prop_(ro|rw)\s*\(\s*"([^"]+)"/g;
+    let match;
+
+    while ((match = propPattern.exec(classChain)) !== null) {
+      const propStart = match.index;
+      const propDef = this.extractBalancedParens(classChain, classChain.indexOf('(', propStart));
+
+      const prop: PropertyBinding = {
+        name: match[2],
+        readonly: match[1] === 'ro',
+      };
+
+      if (propDef) {
+        const docMatch = propDef.match(/R"pbdoc\(([\s\S]*?)\)pbdoc"/);
+        if (docMatch) {
+          prop.docstring = docMatch[1].trim();
+        }
+      }
+
+      binding.properties.push(prop);
+    }
+
+    // Also match .def_ro("name", ...) and .def_rw("name", ...) for fields
+    const fieldPattern = /\.def_(ro|rw)\s*\(\s*"([^"]+)"/g;
+    while ((match = fieldPattern.exec(classChain)) !== null) {
+      // Skip if this is def_prop_ro/rw
+      if (classChain.slice(match.index - 5, match.index).includes('prop')) continue;
+
+      const prop: PropertyBinding = {
+        name: match[2],
+        readonly: match[1] === 'ro',
+      };
+
+      binding.properties.push(prop);
+    }
+  }
+
+  private parseClassConstructors(classChain: string, binding: ClassBinding): void {
+    // Match .def(nb::init<...>())
+    const initPattern = /\.def\s*\(\s*nb::init<([^>]*)>/g;
+    let match;
+
+    while ((match = initPattern.exec(classChain)) !== null) {
+      const ctor: MethodBinding = {
+        name: '__init__',
+        isStatic: false,
+        isConstructor: true,
+      };
+
+      // Parse constructor argument types
+      const argTypes = match[1].split(',').map(t => t.trim()).filter(t => t);
+      if (argTypes.length > 0) {
+        ctor.signature = `def __init__(self, ${argTypes.map((t, i) => `arg${i}: ${t}`).join(', ')})`;
+      }
+
+      binding.constructors.push(ctor);
+    }
   }
 
   private parseEnums(code: string): EnumBinding[] {
