@@ -14,7 +14,7 @@
     "clean": "cmake-js clean && rm -rf dist generated",
     "generate": "npm run build:ts && node dist/generate.js",
     "test-parser": "npm run build:ts && node dist/test-parser.js",
-    "test": "node --test test/",
+    "test": "node --test 'test/**/*.test.js'",
     "prepare": "npm run build",
     "install": "cmake-js compile"
   },
