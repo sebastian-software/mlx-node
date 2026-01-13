@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: macos-14  # Apple Silicon runner
+
+    strategy:
+      matrix:
+        node-version: [18, 20, 22]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build TypeScript
+        run: npm run build:ts
+
+      - name: Generate bindings
+        run: |
+          # Clone MLX source for parsing
+          git clone --depth 1 https://github.com/ml-explore/mlx.git /tmp/mlx-source
+          npm run generate
+
+      - name: Build native module (stub mode)
+        run: npm run build:native
+
+      - name: Run tests
+        run: npm test
+
+      - name: Upload generated bindings
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-bindings-node${{ matrix.node-version }}
+          path: generated/
+          retention-days: 7
+
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript check
+        run: npm run build:ts
+
+  sync-check:
+    runs-on: macos-14
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build TypeScript
+        run: npm run build:ts
+
+      - name: Clone latest MLX
+        run: git clone --depth 1 https://github.com/ml-explore/mlx.git /tmp/mlx-source
+
+      - name: Generate and check for changes
+        run: |
+          npm run generate
+
+          # Count bindings
+          echo "=== Binding Statistics ==="
+          node -e "
+            const fs = require('fs');
+            const data = JSON.parse(fs.readFileSync('generated/bindings.json'));
+            console.log('Total bindings:', data.bindings.length);
+            console.log('Functions:', data.stats.functions);
+            console.log('Classes:', data.stats.classes);
+          "
