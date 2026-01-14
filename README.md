@@ -1,7 +1,5 @@
 # mlx-node
 
-[![CI](https://github.com/user/mlx-node/actions/workflows/ci.yml/badge.svg)](https://github.com/user/mlx-node/actions/workflows/ci.yml)
-
 Node.js bindings for [MLX](https://github.com/ml-explore/mlx) - Apple's array framework for machine learning on Apple Silicon.
 
 ## Overview
@@ -13,7 +11,8 @@ This project provides native Node.js bindings for MLX, automatically generated f
 - **Automatic Sync**: Bindings are auto-generated from MLX Python source
 - **Full Type Safety**: TypeScript definitions generated alongside bindings
 - **Native Performance**: Direct N-API bindings to MLX C++ core
-- **Zero-Copy** (planned): TypedArray support for efficient data transfer
+- **100% Coverage**: Parser captures all 274 functions, 13 classes, and 137 methods
+- **Monorepo Architecture**: Clean separation of parser, codegen, CLI, and native addon
 
 ## Installation
 
@@ -44,27 +43,69 @@ const matrix = new mlx.array([[1, 2], [3, 4]]);
 console.log(matrix.shape); // [2, 2]
 ```
 
+## Project Structure
+
+```
+mlx-node/
+├── packages/
+│   ├── parser/          # @mlx-node/parser - Nanobind C++ parser
+│   ├── codegen/         # @mlx-node/codegen - TypeScript/N-API generators
+│   ├── cli/             # @mlx-node/cli - Code generation CLI + scripts
+│   └── mlx-node/        # mlx-node - Main native addon package
+├── pnpm-workspace.yaml
+├── turbo.json
+└── docs/
+    └── ARCHITECTURE.md  # Architecture Decision Records
+```
+
+### Package Overview
+
+| Package | Description |
+|---------|-------------|
+| `@mlx-node/parser` | Regex-based parser for nanobind C++ binding definitions |
+| `@mlx-node/codegen` | TypeScript definition and N-API C++ code generators |
+| `@mlx-node/cli` | CLI tools and scripts for code generation and coverage checks |
+| `mlx-node` | Main package with native addon, published to npm |
+
+### Dependency Graph
+
+```
+@mlx-node/parser (no dependencies)
+       ↓
+@mlx-node/codegen (depends on parser)
+       ↓
+@mlx-node/cli (depends on parser + codegen)
+       ↓ (generates files for)
+mlx-node (consumes generated/, no runtime dependencies on other packages)
+```
+
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    MLX Python Source                         │
-│                 (nanobind C++ bindings)                      │
+│                    MLX Python Source                        │
+│                 (nanobind C++ bindings)                     │
 └─────────────────────┬───────────────────────────────────────┘
                       │ parse
                       ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                  Nanobind Parser                             │
-│              (src/parser/regex-parser.ts)                    │
+│                  @mlx-node/parser                           │
+│              (Regex-based nanobind parser)                  │
+└─────────────────────┬───────────────────────────────────────┘
+                      │ transform
+                      ▼
+┌─────────────────────────────────────────────────────────────┐
+│                  @mlx-node/codegen                          │
+│        (TypeScript + N-API C++ code generators)             │
 └─────────────────────┬───────────────────────────────────────┘
                       │ generate
                       ▼
 ┌─────────────────────────────────────────────────────────────┐
-│              TypeScript Definitions                          │
-│               (generated/mlx-node.d.ts)                      │
-├─────────────────────────────────────────────────────────────┤
-│                 N-API C++ Bindings                           │
-│                (generated/binding.cpp)                       │
+│                   mlx-node/generated/                       │
+│   ├── mlx-node.d.ts    (TypeScript definitions)             │
+│   ├── binding.cpp      (N-API C++ bindings)                 │
+│   ├── binding.h        (C++ header)                         │
+│   └── bindings.json    (Parsed binding metadata)            │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -73,9 +114,9 @@ console.log(matrix.shape); // [2, 2]
 ### Prerequisites
 
 - Node.js 18+
+- pnpm 9+
 - CMake 3.20+
 - Xcode Command Line Tools (macOS)
-- MLX source (cloned automatically)
 
 ### Setup
 
@@ -84,32 +125,46 @@ console.log(matrix.shape); // [2, 2]
 git clone https://github.com/user/mlx-node.git
 cd mlx-node
 
-# Install dependencies
-npm install
+# Install dependencies (builds native module in stub mode)
+pnpm install
 
-# Clone MLX source for parsing
-git clone --depth 1 https://github.com/ml-explore/mlx.git /tmp/mlx-source
+# Download MLX source files (sparse checkout, ~2MB)
+pnpm setup
 
 # Generate bindings
-npm run generate
-
-# Build native module (stub mode without MLX)
-npm run build:native
+pnpm generate
 
 # Run tests
-npm test
+pnpm test
 ```
+
+The setup script downloads only the required `python/src/*.cpp` files from MLX using git sparse-checkout, storing them locally in `.mlx-source/` (~2MB instead of ~500MB for full repo).
 
 ### Scripts
 
 | Script | Description |
 |--------|-------------|
-| `npm run build` | Generate and build everything |
-| `npm run build:ts` | Compile TypeScript only |
-| `npm run build:native` | Build native module |
-| `npm run generate` | Parse MLX and generate bindings |
-| `npm test` | Run test suite |
-| `npm run clean` | Clean build artifacts |
+| `pnpm install` | Install all dependencies |
+| `pnpm build` | Build all TypeScript packages (via turbo) |
+| `pnpm generate` | Parse MLX and generate bindings |
+| `pnpm test` | Run all tests |
+| `pnpm check-coverage` | Verify parser coverage against MLX source |
+
+### Package-specific Commands
+
+```bash
+# Run parser tests only
+pnpm --filter @mlx-node/parser test
+
+# Run native addon tests only
+pnpm --filter mlx-node test
+
+# Build specific package
+pnpm --filter @mlx-node/codegen build
+
+# Rebuild native module
+pnpm --filter mlx-node rebuild
+```
 
 ### Building with MLX
 
@@ -122,38 +177,43 @@ pip install mlx
 # Set MLX directory (if needed)
 export MLX_DIR=/path/to/mlx/cmake
 
-# Build
-npm run build:native
+# Rebuild native module
+pnpm --filter mlx-node rebuild
 ```
 
 ## Generated API
 
-The generator extracts **311+ bindings** from MLX Python:
+The generator extracts **318 bindings** from MLX Python with **100% coverage**:
 
-- **274 functions** (227 with full type signatures)
-- **13 classes** (array, Dtype, Device, Stream, etc.)
-- **2 enums** (DtypeCategory, DeviceType)
-- **22 constants** (dtype values)
+| Category | Count | Coverage |
+|----------|-------|----------|
+| Functions | 274 | 100% |
+| Classes | 13 | 100% |
+| Enums | 2 | 100% |
+| Attributes | 22 | 100% |
+| Methods | 137 | 100% |
+| Properties | 20 | 100% |
+| Constructors | 6 | 100% |
+| Submodules | 7 | 100% |
 
 ## Status
 
 | Feature | Status |
 |---------|--------|
-| Nanobind parser | ✅ Complete |
+| Nanobind parser | ✅ 100% coverage |
 | TypeScript generator | ✅ Complete |
 | N-API C++ generator | ✅ Complete |
 | Build system (CMake) | ✅ Complete |
+| Monorepo (pnpm/turbo) | ✅ Complete |
 | Stub implementation | ✅ Complete |
-| Test suite | ✅ 13 tests passing |
+| Test suite | ✅ 35 tests passing |
 | CI/CD (GitHub Actions) | ✅ Complete |
 | Auto-sync workflow | ✅ Weekly updates |
 | Full MLX integration | 🚧 In Progress |
 
-## CI/CD
+## Documentation
 
-- **CI**: Builds and tests on every push/PR
-- **Sync**: Weekly auto-sync with MLX upstream
-- **Release**: Automated builds for tagged releases
+- [Architecture Decision Records](docs/adr/) - Design decisions and rationale
 
 ## License
 
@@ -164,3 +224,5 @@ MIT
 - [MLX](https://github.com/ml-explore/mlx) by Apple
 - [nanobind](https://github.com/wjakob/nanobind) for Python bindings
 - [node-addon-api](https://github.com/nodejs/node-addon-api) for N-API
+- [pnpm](https://pnpm.io/) for package management
+- [Turborepo](https://turbo.build/) for monorepo build orchestration
