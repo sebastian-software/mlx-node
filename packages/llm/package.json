@@ -1,0 +1,36 @@
+{
+  "name": "@mlx-node/llm",
+  "version": "0.1.0",
+  "description": "LLM inference for mlx-node",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test test/*.test.js",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "mlx-node": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  },
+  "peerDependencies": {
+    "mlx-node": "workspace:*"
+  },
+  "keywords": [
+    "mlx",
+    "llm",
+    "inference",
+    "transformer",
+    "apple-silicon"
+  ],
+  "license": "MIT"
+}
