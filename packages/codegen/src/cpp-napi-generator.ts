@@ -5,10 +5,12 @@
  * 1. Reading a C++ template file (templates/binding.cpp)
  * 2. Generating function wrappers based on parsed C++ headers
  * 3. Replacing markers in the template with generated code
+ * 4. Formatting with clang-format
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { CppFunction, CppParam, groupByName } from './cpp-header-parser.js';
 import { ExportedFunction } from './export-list-parser.js';
@@ -17,6 +19,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export interface GeneratorOptions {
   templatePath?: string;
+  format?: boolean;
 }
 
 /**
@@ -26,6 +29,7 @@ export class CppNapiGenerator {
   private functions: Map<string, CppFunction[]>;
   private exports: Map<string, ExportedFunction>;
   private templatePath: string;
+  private format: boolean;
 
   constructor(
     functions: CppFunction[],
@@ -36,6 +40,7 @@ export class CppNapiGenerator {
     this.exports = exports;
     this.templatePath = options.templatePath ||
       path.join(__dirname, '..', 'templates', 'binding.cpp');
+    this.format = options.format ?? true;
   }
 
   /**
@@ -50,9 +55,44 @@ export class CppNapiGenerator {
     const exportLines = this.generateExports();
 
     // Replace markers
-    return template
+    let code = template
       .replace('// @@FUNCTION_WRAPPERS@@', wrappers)
       .replace('// @@EXPORTS@@', exportLines);
+
+    // Format with clang-format
+    if (this.format) {
+      code = this.formatCode(code);
+    }
+
+    return code;
+  }
+
+  /**
+   * Format code using clang-format
+   */
+  private formatCode(code: string): string {
+    const clangFormatPaths = [
+      'clang-format',
+      '/usr/bin/clang-format',
+      '/Library/Developer/CommandLineTools/usr/bin/clang-format',
+      '/usr/local/bin/clang-format',
+    ];
+
+    for (const clangFormat of clangFormatPaths) {
+      try {
+        return execSync(clangFormat, {
+          input: code,
+          encoding: 'utf-8',
+          maxBuffer: 10 * 1024 * 1024,
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
+      } catch {
+        continue;
+      }
+    }
+
+    console.warn('clang-format not found, skipping formatting');
+    return code;
   }
 
   /**
@@ -82,7 +122,7 @@ export class CppNapiGenerator {
     const lines: string[] = [];
     for (const [name, _] of this.exports) {
       if (this.functions.has(name)) {
-        lines.push(`  exports.Set("${name}", Napi::Function::New(env, Wrap_${name}));`);
+        lines.push(`exports.Set("${name}", Napi::Function::New(env, Wrap_${name}));`);
       }
     }
     return lines.join('\n');
@@ -102,12 +142,12 @@ export class CppNapiGenerator {
     });
 
     lines.push(`Napi::Value Wrap_${name}(const Napi::CallbackInfo& info) {`);
-    lines.push('  Napi::Env env = info.Env();');
+    lines.push('Napi::Env env = info.Env();');
 
     if (sorted.length === 1) {
-      lines.push(this.generateSingleOverloadBody(sorted[0], '  '));
+      lines.push(this.generateSingleOverloadBody(sorted[0]));
     } else {
-      lines.push(this.generateMultiOverloadBody(name, sorted, '  '));
+      lines.push(this.generateMultiOverloadBody(name, sorted));
     }
 
     lines.push('}');
@@ -118,13 +158,13 @@ export class CppNapiGenerator {
   /**
    * Generate body for single-overload function
    */
-  private generateSingleOverloadBody(fn: CppFunction, indent: string): string {
+  private generateSingleOverloadBody(fn: CppFunction): string {
     const lines: string[] = [];
 
     // Parameter extraction
     for (let i = 0; i < fn.params.length; i++) {
       const param = fn.params[i];
-      lines.push(this.generateParamExtraction(param, i, indent));
+      lines.push(this.generateParamExtraction(param, i));
     }
 
     // Function call with correct namespace
@@ -140,23 +180,23 @@ export class CppNapiGenerator {
     const call = `${nsPrefix}${fn.name}(${args})`;
 
     if (fn.returnType === 'void') {
-      lines.push(`${indent}${call};`);
-      lines.push(`${indent}return env.Undefined();`);
+      lines.push(`${call};`);
+      lines.push(`return env.Undefined();`);
     } else if (fn.returnType === 'array') {
-      lines.push(`${indent}mx::array result = ${call};`);
-      lines.push(`${indent}return ArrayToNapi(env, result);`);
+      lines.push(`mx::array result = ${call};`);
+      lines.push(`return ArrayToNapi(env, result);`);
     } else if (fn.returnType === 'std::vector<array>') {
-      lines.push(`${indent}std::vector<mx::array> result = ${call};`);
-      lines.push(`${indent}return VecArrayToNapi(env, result);`);
+      lines.push(`std::vector<mx::array> result = ${call};`);
+      lines.push(`return VecArrayToNapi(env, result);`);
     } else if (fn.returnType === 'bool') {
-      lines.push(`${indent}bool result = ${call};`);
-      lines.push(`${indent}return Napi::Boolean::New(env, result);`);
+      lines.push(`bool result = ${call};`);
+      lines.push(`return Napi::Boolean::New(env, result);`);
     } else if (fn.returnType === 'int' || fn.returnType === 'size_t') {
-      lines.push(`${indent}auto result = ${call};`);
-      lines.push(`${indent}return Napi::Number::New(env, result);`);
+      lines.push(`auto result = ${call};`);
+      lines.push(`return Napi::Number::New(env, result);`);
     } else {
-      lines.push(`${indent}auto result = ${call};`);
-      lines.push(`${indent}return ArrayToNapi(env, result);`);
+      lines.push(`auto result = ${call};`);
+      lines.push(`return ArrayToNapi(env, result);`);
     }
 
     return lines.join('\n');
@@ -165,12 +205,12 @@ export class CppNapiGenerator {
   /**
    * Generate body for multi-overload function with dispatch
    */
-  private generateMultiOverloadBody(name: string, overloads: CppFunction[], indent: string): string {
+  private generateMultiOverloadBody(name: string, overloads: CppFunction[]): string {
     const primary = overloads[0];
 
     // Special case: arange
     if (name === 'arange') {
-      return this.generateArangeDispatch(indent);
+      return this.generateArangeDispatch();
     }
 
     // Check for reduction patterns
@@ -189,266 +229,254 @@ export class CppNapiGenerator {
 
     // var/std special case
     if (hasAxisOverloads && hasAxesOverloads && hasKeepdims && hasDdof) {
-      return this.generateVarianceDispatch(name, indent);
+      return this.generateVarianceDispatch(name);
     }
 
     // Regular reduction
     if (hasAxisOverloads && hasAxesOverloads && hasKeepdims) {
-      return this.generateReductionDispatch(name, indent);
+      return this.generateReductionDispatch(name);
     }
 
     // Default: use the most general overload
-    return this.generateSingleOverloadBody(primary, indent);
+    return this.generateSingleOverloadBody(primary);
   }
 
   /**
    * Generate dispatch for arange function
    */
-  private generateArangeDispatch(indent: string): string {
-    return `${indent}mx::StreamOrDevice s = {};
-
-${indent}if (info.Length() == 1) {
-${indent}  double stop = info[0].As<Napi::Number>().DoubleValue();
-${indent}  return ArrayToNapi(env, mx::arange(stop, s));
-${indent}}
-
-${indent}if (info.Length() == 2) {
-${indent}  double start = info[0].As<Napi::Number>().DoubleValue();
-${indent}  double stop = info[1].As<Napi::Number>().DoubleValue();
-${indent}  return ArrayToNapi(env, mx::arange(start, stop, 1.0, s));
-${indent}}
-
-${indent}if (info.Length() >= 3) {
-${indent}  double start = info[0].As<Napi::Number>().DoubleValue();
-${indent}  double stop = info[1].As<Napi::Number>().DoubleValue();
-${indent}  double step = info[2].As<Napi::Number>().DoubleValue();
-${indent}  return ArrayToNapi(env, mx::arange(start, stop, step, s));
-${indent}}
-
-${indent}return env.Undefined();`;
+  private generateArangeDispatch(): string {
+    return `mx::StreamOrDevice s = {};
+if (info.Length() == 1) {
+double stop = info[0].As<Napi::Number>().DoubleValue();
+return ArrayToNapi(env, mx::arange(stop, s));
+}
+if (info.Length() == 2) {
+double start = info[0].As<Napi::Number>().DoubleValue();
+double stop = info[1].As<Napi::Number>().DoubleValue();
+return ArrayToNapi(env, mx::arange(start, stop, 1.0, s));
+}
+if (info.Length() >= 3) {
+double start = info[0].As<Napi::Number>().DoubleValue();
+double stop = info[1].As<Napi::Number>().DoubleValue();
+double step = info[2].As<Napi::Number>().DoubleValue();
+return ArrayToNapi(env, mx::arange(start, stop, step, s));
+}
+return env.Undefined();`;
   }
 
   /**
    * Generate dispatch for reduction functions (sum, mean, max, etc.)
    */
-  private generateReductionDispatch(name: string, indent: string): string {
-    return `${indent}mx::array a = NapiToArray(info[0]);
-${indent}bool keepdims = false;
-${indent}mx::StreamOrDevice s = {};
-
-${indent}if (info.Length() == 1 || info[1].IsUndefined()) {
-${indent}  return ArrayToNapi(env, mx::${name}(a, keepdims, s));
-${indent}}
-
-${indent}if (info[1].IsNumber()) {
-${indent}  int axis = info[1].As<Napi::Number>().Int32Value();
-${indent}  if (info.Length() > 2 && info[2].IsBoolean()) {
-${indent}    keepdims = info[2].As<Napi::Boolean>().Value();
-${indent}  }
-${indent}  return ArrayToNapi(env, mx::${name}(a, axis, keepdims, s));
-${indent}}
-
-${indent}if (info[1].IsArray()) {
-${indent}  std::vector<int> axes = NapiToVecInt(info[1]);
-${indent}  if (info.Length() > 2 && info[2].IsBoolean()) {
-${indent}    keepdims = info[2].As<Napi::Boolean>().Value();
-${indent}  }
-${indent}  return ArrayToNapi(env, mx::${name}(a, axes, keepdims, s));
-${indent}}
-
-${indent}return ArrayToNapi(env, mx::${name}(a, keepdims, s));`;
+  private generateReductionDispatch(name: string): string {
+    return `mx::array a = NapiToArray(info[0]);
+bool keepdims = false;
+mx::StreamOrDevice s = {};
+if (info.Length() == 1 || info[1].IsUndefined()) {
+return ArrayToNapi(env, mx::${name}(a, keepdims, s));
+}
+if (info[1].IsNumber()) {
+int axis = info[1].As<Napi::Number>().Int32Value();
+if (info.Length() > 2 && info[2].IsBoolean()) {
+keepdims = info[2].As<Napi::Boolean>().Value();
+}
+return ArrayToNapi(env, mx::${name}(a, axis, keepdims, s));
+}
+if (info[1].IsArray()) {
+std::vector<int> axes = NapiToVecInt(info[1]);
+if (info.Length() > 2 && info[2].IsBoolean()) {
+keepdims = info[2].As<Napi::Boolean>().Value();
+}
+return ArrayToNapi(env, mx::${name}(a, axes, keepdims, s));
+}
+return ArrayToNapi(env, mx::${name}(a, keepdims, s));`;
   }
 
   /**
    * Generate dispatch for variance functions (var, std)
    */
-  private generateVarianceDispatch(name: string, indent: string): string {
-    return `${indent}mx::array a = NapiToArray(info[0]);
-${indent}bool keepdims = false;
-${indent}int ddof = 0;
-${indent}mx::StreamOrDevice s = {};
-
-${indent}if (info.Length() == 1 || info[1].IsUndefined()) {
-${indent}  return ArrayToNapi(env, mx::${name}(a, keepdims, ddof, s));
-${indent}}
-
-${indent}if (info[1].IsNumber()) {
-${indent}  int axis = info[1].As<Napi::Number>().Int32Value();
-${indent}  if (info.Length() > 2 && info[2].IsBoolean()) {
-${indent}    keepdims = info[2].As<Napi::Boolean>().Value();
-${indent}  }
-${indent}  if (info.Length() > 3 && info[3].IsNumber()) {
-${indent}    ddof = info[3].As<Napi::Number>().Int32Value();
-${indent}  }
-${indent}  return ArrayToNapi(env, mx::${name}(a, axis, keepdims, ddof, s));
-${indent}}
-
-${indent}if (info[1].IsArray()) {
-${indent}  std::vector<int> axes = NapiToVecInt(info[1]);
-${indent}  if (info.Length() > 2 && info[2].IsBoolean()) {
-${indent}    keepdims = info[2].As<Napi::Boolean>().Value();
-${indent}  }
-${indent}  if (info.Length() > 3 && info[3].IsNumber()) {
-${indent}    ddof = info[3].As<Napi::Number>().Int32Value();
-${indent}  }
-${indent}  return ArrayToNapi(env, mx::${name}(a, axes, keepdims, ddof, s));
-${indent}}
-
-${indent}return ArrayToNapi(env, mx::${name}(a, keepdims, ddof, s));`;
+  private generateVarianceDispatch(name: string): string {
+    return `mx::array a = NapiToArray(info[0]);
+bool keepdims = false;
+int ddof = 0;
+mx::StreamOrDevice s = {};
+if (info.Length() == 1 || info[1].IsUndefined()) {
+return ArrayToNapi(env, mx::${name}(a, keepdims, ddof, s));
+}
+if (info[1].IsNumber()) {
+int axis = info[1].As<Napi::Number>().Int32Value();
+if (info.Length() > 2 && info[2].IsBoolean()) {
+keepdims = info[2].As<Napi::Boolean>().Value();
+}
+if (info.Length() > 3 && info[3].IsNumber()) {
+ddof = info[3].As<Napi::Number>().Int32Value();
+}
+return ArrayToNapi(env, mx::${name}(a, axis, keepdims, ddof, s));
+}
+if (info[1].IsArray()) {
+std::vector<int> axes = NapiToVecInt(info[1]);
+if (info.Length() > 2 && info[2].IsBoolean()) {
+keepdims = info[2].As<Napi::Boolean>().Value();
+}
+if (info.Length() > 3 && info[3].IsNumber()) {
+ddof = info[3].As<Napi::Number>().Int32Value();
+}
+return ArrayToNapi(env, mx::${name}(a, axes, keepdims, ddof, s));
+}
+return ArrayToNapi(env, mx::${name}(a, keepdims, ddof, s));`;
   }
 
   /**
    * Generate parameter extraction code
    */
-  private generateParamExtraction(param: CppParam, index: number, indent: string): string {
+  private generateParamExtraction(param: CppParam, index: number): string {
     const { name, type, defaultValue } = param;
     const hasDefault = !!defaultValue;
 
     // Array types
     if (type === 'array' || type === 'mx::array') {
       if (hasDefault) {
-        return `${indent}mx::array ${name} = info.Length() > ${index} && !info[${index}].IsUndefined() ? NapiToArray(info[${index}]) : ${defaultValue};`;
+        return `mx::array ${name} = info.Length() > ${index} && !info[${index}].IsUndefined() ? NapiToArray(info[${index}]) : ${defaultValue};`;
       }
-      return `${indent}mx::array ${name} = NapiToArray(info[${index}]);`;
+      return `mx::array ${name} = NapiToArray(info[${index}]);`;
     }
 
     // Shape types
     if (type === 'Shape' || type === 'mx::Shape') {
       if (hasDefault) {
-        return `${indent}mx::Shape ${name} = info.Length() > ${index} && !info[${index}].IsUndefined() ? NapiToShape(info[${index}]) : mx::Shape${defaultValue};`;
+        return `mx::Shape ${name} = info.Length() > ${index} && !info[${index}].IsUndefined() ? NapiToShape(info[${index}]) : mx::Shape${defaultValue};`;
       }
-      return `${indent}mx::Shape ${name} = NapiToShape(info[${index}]);`;
+      return `mx::Shape ${name} = NapiToShape(info[${index}]);`;
     }
 
     // Vector<int>
     if (type === 'std::vector<int>') {
       if (hasDefault) {
-        return `${indent}std::vector<int> ${name} = info.Length() > ${index} && !info[${index}].IsUndefined() ? NapiToVecInt(info[${index}]) : std::vector<int>${defaultValue};`;
+        return `std::vector<int> ${name} = info.Length() > ${index} && !info[${index}].IsUndefined() ? NapiToVecInt(info[${index}]) : std::vector<int>${defaultValue};`;
       }
-      return `${indent}std::vector<int> ${name} = NapiToVecInt(info[${index}]);`;
+      return `std::vector<int> ${name} = NapiToVecInt(info[${index}]);`;
     }
 
     // Vector<array>
     if (type === 'std::vector<array>' || type === 'std::vector<mx::array>') {
-      return `${indent}std::vector<mx::array> ${name} = NapiToVecArray(info[${index}]);`;
+      return `std::vector<mx::array> ${name} = NapiToVecArray(info[${index}]);`;
     }
 
     // Dtype
     if (type === 'Dtype' || type === 'mx::Dtype') {
       let def = defaultValue || 'float32';
       if (!def.startsWith('mx::')) def = `mx::${def}`;
-      return `${indent}mx::Dtype ${name} = info.Length() > ${index} && !info[${index}].IsUndefined() ? NapiToDtype(info[${index}]) : ${def};`;
+      return `mx::Dtype ${name} = info.Length() > ${index} && !info[${index}].IsUndefined() ? NapiToDtype(info[${index}]) : ${def};`;
     }
 
     // StreamOrDevice
     if (type === 'StreamOrDevice' || type === 'mx::StreamOrDevice') {
-      return `${indent}mx::StreamOrDevice ${name} = {};`;
+      return `mx::StreamOrDevice ${name} = {};`;
     }
 
     // Primitives
     if (type === 'int') {
       const def = defaultValue || '0';
       if (hasDefault) {
-        return `${indent}int ${name} = info.Length() > ${index} && !info[${index}].IsUndefined() ? info[${index}].As<Napi::Number>().Int32Value() : ${def};`;
+        return `int ${name} = info.Length() > ${index} && !info[${index}].IsUndefined() ? info[${index}].As<Napi::Number>().Int32Value() : ${def};`;
       }
-      return `${indent}int ${name} = info[${index}].As<Napi::Number>().Int32Value();`;
+      return `int ${name} = info[${index}].As<Napi::Number>().Int32Value();`;
     }
 
     if (type === 'bool') {
       const def = defaultValue || 'false';
-      return `${indent}bool ${name} = info.Length() > ${index} && !info[${index}].IsUndefined() ? info[${index}].As<Napi::Boolean>().Value() : ${def};`;
+      return `bool ${name} = info.Length() > ${index} && !info[${index}].IsUndefined() ? info[${index}].As<Napi::Boolean>().Value() : ${def};`;
     }
 
     if (type === 'double' || type === 'float') {
       const def = defaultValue || '0.0';
       if (hasDefault) {
-        return `${indent}double ${name} = info.Length() > ${index} && !info[${index}].IsUndefined() ? info[${index}].As<Napi::Number>().DoubleValue() : ${def};`;
+        return `double ${name} = info.Length() > ${index} && !info[${index}].IsUndefined() ? info[${index}].As<Napi::Number>().DoubleValue() : ${def};`;
       }
-      return `${indent}double ${name} = info[${index}].As<Napi::Number>().DoubleValue();`;
+      return `double ${name} = info[${index}].As<Napi::Number>().DoubleValue();`;
     }
 
     if (type === 'size_t') {
       const def = defaultValue || '0';
       if (hasDefault) {
-        return `${indent}size_t ${name} = info.Length() > ${index} && !info[${index}].IsUndefined() ? static_cast<size_t>(info[${index}].As<Napi::Number>().Int64Value()) : ${def};`;
+        return `size_t ${name} = info.Length() > ${index} && !info[${index}].IsUndefined() ? static_cast<size_t>(info[${index}].As<Napi::Number>().Int64Value()) : ${def};`;
       }
-      return `${indent}size_t ${name} = static_cast<size_t>(info[${index}].As<Napi::Number>().Int64Value());`;
+      return `size_t ${name} = static_cast<size_t>(info[${index}].As<Napi::Number>().Int64Value());`;
     }
 
     // String
     if (type === 'std::string' || type === 'string') {
       const def = defaultValue ? `"${defaultValue.replace(/"/g, '')}"` : '""';
-      return `${indent}std::string ${name} = info.Length() > ${index} && !info[${index}].IsUndefined() ? info[${index}].As<Napi::String>().Utf8Value() : ${def};`;
+      return `std::string ${name} = info.Length() > ${index} && !info[${index}].IsUndefined() ? info[${index}].As<Napi::String>().Utf8Value() : ${def};`;
     }
 
     // Optional types
     if (type.includes('optional<array>')) {
-      return `${indent}std::optional<mx::array> ${name} = info.Length() > ${index} && !info[${index}].IsUndefined() && !info[${index}].IsNull() ? std::optional<mx::array>(NapiToArray(info[${index}])) : std::nullopt;`;
+      return `std::optional<mx::array> ${name} = info.Length() > ${index} && !info[${index}].IsUndefined() && !info[${index}].IsNull() ? std::optional<mx::array>(NapiToArray(info[${index}])) : std::nullopt;`;
     }
 
     if (type.includes('optional<int>')) {
-      return `${indent}std::optional<int> ${name} = info.Length() > ${index} && !info[${index}].IsUndefined() && !info[${index}].IsNull() ? std::optional<int>(info[${index}].As<Napi::Number>().Int32Value()) : std::nullopt;`;
+      return `std::optional<int> ${name} = info.Length() > ${index} && !info[${index}].IsUndefined() && !info[${index}].IsNull() ? std::optional<int>(info[${index}].As<Napi::Number>().Int32Value()) : std::nullopt;`;
     }
 
     if (type.includes('optional<float>') || type.includes('optional<double>')) {
-      return `${indent}std::optional<float> ${name} = info.Length() > ${index} && !info[${index}].IsUndefined() && !info[${index}].IsNull() ? std::optional<float>(info[${index}].As<Napi::Number>().FloatValue()) : std::nullopt;`;
+      return `std::optional<float> ${name} = info.Length() > ${index} && !info[${index}].IsUndefined() && !info[${index}].IsNull() ? std::optional<float>(info[${index}].As<Napi::Number>().FloatValue()) : std::nullopt;`;
     }
 
     if (type.includes('optional<Dtype>')) {
-      return `${indent}std::optional<mx::Dtype> ${name} = info.Length() > ${index} && !info[${index}].IsUndefined() && !info[${index}].IsNull() ? std::optional<mx::Dtype>(NapiToDtype(info[${index}])) : std::nullopt;`;
+      return `std::optional<mx::Dtype> ${name} = info.Length() > ${index} && !info[${index}].IsUndefined() && !info[${index}].IsNull() ? std::optional<mx::Dtype>(NapiToDtype(info[${index}])) : std::nullopt;`;
     }
 
     if (type.includes('optional<std::vector<int>>')) {
-      return `${indent}std::optional<std::vector<int>> ${name} = info.Length() > ${index} && !info[${index}].IsUndefined() && !info[${index}].IsNull() ? std::optional<std::vector<int>>(NapiToVecInt(info[${index}])) : std::nullopt;`;
+      return `std::optional<std::vector<int>> ${name} = info.Length() > ${index} && !info[${index}].IsUndefined() && !info[${index}].IsNull() ? std::optional<std::vector<int>>(NapiToVecInt(info[${index}])) : std::nullopt;`;
     }
 
     // Strides
     if (type === 'Strides' || type === 'mx::Strides') {
-      return `${indent}mx::Strides ${name} = info.Length() > ${index} && !info[${index}].IsUndefined() ? [&]() {
-${indent}  mx::Strides s;
-${indent}  if (info[${index}].IsArray()) {
-${indent}    Napi::Array arr = info[${index}].As<Napi::Array>();
-${indent}    for (uint32_t i = 0; i < arr.Length(); i++) {
-${indent}      s.push_back(static_cast<size_t>(arr.Get(i).As<Napi::Number>().Int64Value()));
-${indent}    }
-${indent}  }
-${indent}  return s;
-${indent}}() : mx::Strides{};`;
+      return `mx::Strides ${name} = info.Length() > ${index} && !info[${index}].IsUndefined() ? [&]() {
+mx::Strides s;
+if (info[${index}].IsArray()) {
+Napi::Array arr = info[${index}].As<Napi::Array>();
+for (uint32_t i = 0; i < arr.Length(); i++) {
+s.push_back(static_cast<size_t>(arr.Get(i).As<Napi::Number>().Int64Value()));
+}
+}
+return s;
+}() : mx::Strides{};`;
     }
 
     // Pair<int, int>
     if (type === 'std::pair<int, int>' || type.includes('pair<int')) {
       const def = defaultValue || '{1, 1}';
-      return `${indent}std::pair<int, int> ${name} = info.Length() > ${index} && !info[${index}].IsUndefined() ? [&]() {
-${indent}  if (info[${index}].IsArray()) {
-${indent}    Napi::Array arr = info[${index}].As<Napi::Array>();
-${indent}    return std::pair<int, int>{arr.Get(0u).As<Napi::Number>().Int32Value(), arr.Get(1u).As<Napi::Number>().Int32Value()};
-${indent}  }
-${indent}  return std::pair<int, int>${def};
-${indent}}() : std::pair<int, int>${def};`;
+      return `std::pair<int, int> ${name} = info.Length() > ${index} && !info[${index}].IsUndefined() ? [&]() {
+if (info[${index}].IsArray()) {
+Napi::Array arr = info[${index}].As<Napi::Array>();
+return std::pair<int, int>{arr.Get(0u).As<Napi::Number>().Int32Value(), arr.Get(1u).As<Napi::Number>().Int32Value()};
+}
+return std::pair<int, int>${def};
+}() : std::pair<int, int>${def};`;
     }
 
     // Tuple<int, int, int>
     if (type.includes('tuple<int, int, int>')) {
       const def = defaultValue || '{1, 1, 1}';
-      return `${indent}std::tuple<int, int, int> ${name} = info.Length() > ${index} && !info[${index}].IsUndefined() ? [&]() {
-${indent}  if (info[${index}].IsArray()) {
-${indent}    Napi::Array arr = info[${index}].As<Napi::Array>();
-${indent}    return std::tuple<int, int, int>{arr.Get(0u).As<Napi::Number>().Int32Value(), arr.Get(1u).As<Napi::Number>().Int32Value(), arr.Get(2u).As<Napi::Number>().Int32Value()};
-${indent}  }
-${indent}  return std::tuple<int, int, int>${def};
-${indent}}() : std::tuple<int, int, int>${def};`;
+      return `std::tuple<int, int, int> ${name} = info.Length() > ${index} && !info[${index}].IsUndefined() ? [&]() {
+if (info[${index}].IsArray()) {
+Napi::Array arr = info[${index}].As<Napi::Array>();
+return std::tuple<int, int, int>{arr.Get(0u).As<Napi::Number>().Int32Value(), arr.Get(1u).As<Napi::Number>().Int32Value(), arr.Get(2u).As<Napi::Number>().Int32Value()};
+}
+return std::tuple<int, int, int>${def};
+}() : std::tuple<int, int, int>${def};`;
     }
 
     // uint64_t
     if (type === 'uint64_t') {
       const def = defaultValue || '0';
-      return `${indent}uint64_t ${name} = info.Length() > ${index} && !info[${index}].IsUndefined() ? static_cast<uint64_t>(info[${index}].As<Napi::Number>().Int64Value()) : ${def};`;
+      return `uint64_t ${name} = info.Length() > ${index} && !info[${index}].IsUndefined() ? static_cast<uint64_t>(info[${index}].As<Napi::Number>().Int64Value()) : ${def};`;
     }
 
     // Fallback
     console.warn(`Unhandled type: ${type} for param ${name}`);
-    return `${indent}// FIXME: Unhandled type ${type} for param ${name}
-${indent}int ${name}_UNHANDLED = 0; (void)${name}_UNHANDLED;`;
+    return `// FIXME: Unhandled type ${type} for param ${name}
+int ${name}_UNHANDLED = 0; (void)${name}_UNHANDLED;`;
   }
 }

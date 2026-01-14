@@ -1,12 +1,13 @@
 // Auto-generated N-API bindings for MLX
 // Generated from C++ headers - DO NOT EDIT
 
-#include <napi.h>
 #include <mlx/mlx.h>
-#include <vector>
+#include <napi.h>
+
+#include <functional>
 #include <optional>
 #include <string>
-#include <functional>
+#include <vector>
 
 namespace mx = mlx::core;
 
@@ -33,13 +34,13 @@ mx::StreamOrDevice NapiToStreamOrDevice(const Napi::Value& value);
 // ============================================================================
 
 class MLXArray : public Napi::ObjectWrap<MLXArray> {
-public:
+ public:
   static Napi::Object Init(Napi::Env env, Napi::Object exports);
   MLXArray(const Napi::CallbackInfo& info);
 
   mx::array array_;
 
-private:
+ private:
   Napi::Value GetShape(const Napi::CallbackInfo& info);
   Napi::Value GetNdim(const Napi::CallbackInfo& info);
   Napi::Value GetSize(const Napi::CallbackInfo& info);
@@ -53,18 +54,20 @@ private:
 };
 
 Napi::Object MLXArray::Init(Napi::Env env, Napi::Object exports) {
-  Napi::Function func = DefineClass(env, "MLXArray", {
-    InstanceAccessor("shape", &MLXArray::GetShape, nullptr),
-    InstanceAccessor("ndim", &MLXArray::GetNdim, nullptr),
-    InstanceAccessor("size", &MLXArray::GetSize, nullptr),
-    InstanceAccessor("dtype", &MLXArray::GetDtype, nullptr),
-    InstanceAccessor("itemsize", &MLXArray::GetItemsize, nullptr),
-    InstanceAccessor("nbytes", &MLXArray::GetNbytes, nullptr),
-    InstanceMethod("tolist", &MLXArray::ToList),
-    InstanceMethod("item", &MLXArray::Item),
-    InstanceMethod("reshape", &MLXArray::Reshape),
-    InstanceMethod("astype", &MLXArray::Astype),
-  });
+  Napi::Function func =
+      DefineClass(env, "MLXArray",
+                  {
+                      InstanceAccessor("shape", &MLXArray::GetShape, nullptr),
+                      InstanceAccessor("ndim", &MLXArray::GetNdim, nullptr),
+                      InstanceAccessor("size", &MLXArray::GetSize, nullptr),
+                      InstanceAccessor("dtype", &MLXArray::GetDtype, nullptr),
+                      InstanceAccessor("itemsize", &MLXArray::GetItemsize, nullptr),
+                      InstanceAccessor("nbytes", &MLXArray::GetNbytes, nullptr),
+                      InstanceMethod("tolist", &MLXArray::ToList),
+                      InstanceMethod("item", &MLXArray::Item),
+                      InstanceMethod("reshape", &MLXArray::Reshape),
+                      InstanceMethod("astype", &MLXArray::Astype),
+                  });
 
   constructor = Napi::Persistent(func);
   constructor.SuppressDestruct();
@@ -104,20 +107,34 @@ Napi::Value MLXArray::GetSize(const Napi::CallbackInfo& info) {
 Napi::Value MLXArray::GetDtype(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::Dtype dtype = array_.dtype();
-  if (dtype == mx::bool_) return Napi::String::New(env, "bool");
-  if (dtype == mx::uint8) return Napi::String::New(env, "uint8");
-  if (dtype == mx::uint16) return Napi::String::New(env, "uint16");
-  if (dtype == mx::uint32) return Napi::String::New(env, "uint32");
-  if (dtype == mx::uint64) return Napi::String::New(env, "uint64");
-  if (dtype == mx::int8) return Napi::String::New(env, "int8");
-  if (dtype == mx::int16) return Napi::String::New(env, "int16");
-  if (dtype == mx::int32) return Napi::String::New(env, "int32");
-  if (dtype == mx::int64) return Napi::String::New(env, "int64");
-  if (dtype == mx::float16) return Napi::String::New(env, "float16");
-  if (dtype == mx::float32) return Napi::String::New(env, "float32");
-  if (dtype == mx::float64) return Napi::String::New(env, "float64");
-  if (dtype == mx::bfloat16) return Napi::String::New(env, "bfloat16");
-  if (dtype == mx::complex64) return Napi::String::New(env, "complex64");
+  if (dtype == mx::bool_)
+    return Napi::String::New(env, "bool");
+  if (dtype == mx::uint8)
+    return Napi::String::New(env, "uint8");
+  if (dtype == mx::uint16)
+    return Napi::String::New(env, "uint16");
+  if (dtype == mx::uint32)
+    return Napi::String::New(env, "uint32");
+  if (dtype == mx::uint64)
+    return Napi::String::New(env, "uint64");
+  if (dtype == mx::int8)
+    return Napi::String::New(env, "int8");
+  if (dtype == mx::int16)
+    return Napi::String::New(env, "int16");
+  if (dtype == mx::int32)
+    return Napi::String::New(env, "int32");
+  if (dtype == mx::int64)
+    return Napi::String::New(env, "int64");
+  if (dtype == mx::float16)
+    return Napi::String::New(env, "float16");
+  if (dtype == mx::float32)
+    return Napi::String::New(env, "float32");
+  if (dtype == mx::float64)
+    return Napi::String::New(env, "float64");
+  if (dtype == mx::bfloat16)
+    return Napi::String::New(env, "bfloat16");
+  if (dtype == mx::complex64)
+    return Napi::String::New(env, "complex64");
   return Napi::String::New(env, "unknown");
 }
 
@@ -407,20 +424,34 @@ Napi::Value VecArrayToNapi(Napi::Env env, const std::vector<mx::array>& vec) {
 mx::Dtype NapiToDtype(const Napi::Value& value) {
   if (value.IsString()) {
     std::string s = value.As<Napi::String>().Utf8Value();
-    if (s == "bool") return mx::bool_;
-    if (s == "uint8") return mx::uint8;
-    if (s == "uint16") return mx::uint16;
-    if (s == "uint32") return mx::uint32;
-    if (s == "uint64") return mx::uint64;
-    if (s == "int8") return mx::int8;
-    if (s == "int16") return mx::int16;
-    if (s == "int32") return mx::int32;
-    if (s == "int64") return mx::int64;
-    if (s == "float16") return mx::float16;
-    if (s == "float32") return mx::float32;
-    if (s == "float64") return mx::float64;
-    if (s == "bfloat16") return mx::bfloat16;
-    if (s == "complex64") return mx::complex64;
+    if (s == "bool")
+      return mx::bool_;
+    if (s == "uint8")
+      return mx::uint8;
+    if (s == "uint16")
+      return mx::uint16;
+    if (s == "uint32")
+      return mx::uint32;
+    if (s == "uint64")
+      return mx::uint64;
+    if (s == "int8")
+      return mx::int8;
+    if (s == "int16")
+      return mx::int16;
+    if (s == "int32")
+      return mx::int32;
+    if (s == "int64")
+      return mx::int64;
+    if (s == "float16")
+      return mx::float16;
+    if (s == "float32")
+      return mx::float32;
+    if (s == "float64")
+      return mx::float64;
+    if (s == "bfloat16")
+      return mx::bfloat16;
+    if (s == "complex64")
+      return mx::complex64;
   }
   return mx::float32;
 }
