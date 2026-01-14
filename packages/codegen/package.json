@@ -5,6 +5,10 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "bin": {
+    "mlx-generate": "./dist/generate-from-cpp.js",
+    "mlx-check-bindings": "./dist/check-bindings.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -13,17 +17,17 @@
   },
   "scripts": {
     "build": "tsc",
-    "clean": "rm -rf dist"
-  },
-  "dependencies": {
-    "@mlx-node/parser": "workspace:*"
+    "clean": "rm -rf dist",
+    "generate": "node dist/generate-from-cpp.js",
+    "check-bindings": "node dist/check-bindings.js"
   },
   "devDependencies": {
     "@types/node": "^22.0.0"
   },
   "files": [
     "dist",
-    "src"
+    "src",
+    "templates"
   ],
   "license": "MIT"
 }

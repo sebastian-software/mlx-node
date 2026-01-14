@@ -8,6 +8,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import * as crypto from 'crypto';
 import { parseCppHeader, CppFunction } from './cpp-header-parser.js';
 import { parseExportList, ExportedFunction } from './export-list-parser.js';
 import { CppNapiGenerator } from './cpp-napi-generator.js';
@@ -110,6 +111,19 @@ async function main() {
     console.log(`\nFunctions in exports but not in headers: ${missing.length}`);
     console.log(`  ${missing.slice(0, 10).join(', ')}${missing.length > 10 ? '...' : ''}`);
   }
+
+  // Compute and save hash of Python bindings
+  const pyContents: string[] = [];
+  for (const pyFile of PYTHON_FILES) {
+    const pyPath = path.join(PYTHON_BINDINGS_DIR, pyFile);
+    if (fs.existsSync(pyPath)) {
+      pyContents.push(fs.readFileSync(pyPath, 'utf-8'));
+    }
+  }
+  const hash = crypto.createHash('sha256').update(pyContents.join('\n')).digest('hex').slice(0, 16);
+  const hashPath = path.join(OUTPUT_DIR, '.bindings-hash');
+  fs.writeFileSync(hashPath, hash + '\n');
+  console.log(`\nBindings hash: ${hash}`);
 
   console.log('\n=== Done ===');
 }

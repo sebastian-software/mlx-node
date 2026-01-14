@@ -13,8 +13,10 @@ CMakeFiles/
 cmake_install.cmake
 Makefile
 
-# Generated files (can be regenerated)
-**/generated/
+# Generated files (track binding.cpp and hash for stability)
+**/generated/*
+!**/generated/binding.cpp
+!**/generated/.bindings-hash
 
 # MLX source (downloaded via pnpm setup)
 .mlx-source/
