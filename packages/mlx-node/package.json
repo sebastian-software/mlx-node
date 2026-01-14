@@ -1,0 +1,55 @@
+{
+  "name": "mlx-node",
+  "version": "0.1.0",
+  "description": "Node.js bindings for MLX (Apple's ML framework for Apple Silicon)",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "type": "module",
+  "scripts": {
+    "build:native": "cmake-js compile",
+    "build:native:debug": "cmake-js compile --debug",
+    "build": "npm run build:native",
+    "rebuild": "cmake-js rebuild",
+    "clean": "cmake-js clean && rm -rf generated",
+    "test": "node --test 'test/**/*.test.js'",
+    "preinstall": "npm run build:native"
+  },
+  "keywords": [
+    "mlx",
+    "machine-learning",
+    "apple-silicon",
+    "neural-network",
+    "gpu",
+    "metal",
+    "native"
+  ],
+  "author": "",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/user/mlx-node.git"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64",
+    "x64"
+  ],
+  "dependencies": {
+    "cmake-js": "^7.4.0",
+    "node-addon-api": "^8.5.0"
+  },
+  "binary": {
+    "napi_versions": [8]
+  },
+  "files": [
+    "lib",
+    "src",
+    "generated",
+    "CMakeLists.txt"
+  ]
+}

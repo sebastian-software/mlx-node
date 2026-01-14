@@ -75,7 +75,7 @@ else()
 
     # Check if generated files exist
     if(NOT EXISTS "${CMAKE_SOURCE_DIR}/generated/binding.cpp")
-        message(FATAL_ERROR "Generated bindings not found. Run 'npm run generate' first.")
+        message(FATAL_ERROR "Generated bindings not found. Run 'pnpm generate' first.")
     endif()
 endif()
 

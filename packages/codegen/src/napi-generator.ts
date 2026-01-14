@@ -5,7 +5,7 @@
  * Uses node-addon-api (C++ wrapper for N-API) for cleaner code.
  */
 
-import { type Binding, type FunctionBinding, type ClassBinding, parseSignature } from '../parser/regex-parser.js';
+import { type Binding, type FunctionBinding, type ClassBinding, parseSignature } from '@mlx-node/parser';
 
 export interface NapiGeneratorOptions {
   /** Include original docstrings as comments */

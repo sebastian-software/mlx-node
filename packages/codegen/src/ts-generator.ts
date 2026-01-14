@@ -4,7 +4,7 @@
  * Generates .d.ts files from parsed nanobind bindings
  */
 
-import { type Binding, type FunctionBinding, type ClassBinding, parseSignature } from '../parser/regex-parser.js';
+import { type Binding, type FunctionBinding, type ClassBinding, parseSignature } from '@mlx-node/parser';
 import { pythonToTypeScript, toCamelCase, isOptional } from './type-mapper.js';
 
 export interface GeneratorOptions {

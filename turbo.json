@@ -1,0 +1,25 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**"]
+    },
+    "generate": {
+      "dependsOn": ["^build"],
+      "outputs": ["packages/mlx-node/generated/**"],
+      "cache": false
+    },
+    "build:native": {
+      "dependsOn": ["generate"],
+      "outputs": ["build/**/*.node"],
+      "cache": false
+    },
+    "test": {
+      "dependsOn": ["build"]
+    },
+    "clean": {
+      "cache": false
+    }
+  }
+}

@@ -4,42 +4,83 @@
  *
  * Parses MLX Python bindings (nanobind) and generates:
  * - TypeScript definitions
- * - (Future) N-API C++ bindings
+ * - N-API C++ bindings
  */
 
-import { readFileSync, writeFileSync, readdirSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, readdirSync, mkdirSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { NanobindRegexParser, type Binding } from './parser/regex-parser.js';
-import { TypeScriptGenerator } from './generator/ts-generator.js';
-import { NapiGenerator } from './generator/napi-generator.js';
+import { NanobindRegexParser, type Binding } from '@mlx-node/parser';
+import { TypeScriptGenerator, NapiGenerator } from '@mlx-node/codegen';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// Configuration
+// Find monorepo root (where pnpm-workspace.yaml is)
+function findRoot(): string {
+  let dir = __dirname;
+  while (dir !== '/') {
+    if (existsSync(join(dir, 'pnpm-workspace.yaml'))) {
+      return dir;
+    }
+    dir = dirname(dir);
+  }
+  return join(__dirname, '..', '..', '..');
+}
+
+const ROOT_DIR = findRoot();
+
+// Configuration - prefer local .mlx-source, fallback to /tmp
+function getDefaultMlxSource(): string {
+  const localPath = join(ROOT_DIR, '.mlx-source', 'python', 'src');
+  if (existsSync(localPath)) {
+    return localPath;
+  }
+  // Fallback for backwards compatibility
+  const tmpPath = '/tmp/mlx-source/python/src';
+  if (existsSync(tmpPath)) {
+    return tmpPath;
+  }
+  return localPath; // Return local path even if not exists (will error with helpful message)
+}
+
 const config = {
-  mlxSourceDir: process.env.MLX_SOURCE || '/tmp/mlx-source/python/src',
-  outputDir: process.env.OUTPUT_DIR || join(__dirname, '..', 'generated'),
+  mlxSourceDir: process.env.MLX_SOURCE || getDefaultMlxSource(),
+  outputDir: process.env.OUTPUT_DIR || join(ROOT_DIR, 'packages', 'mlx-node', 'generated'),
 };
 
-async function main() {
+export async function generate(options?: { mlxSourceDir?: string; outputDir?: string }) {
+  const mlxSourceDir = options?.mlxSourceDir || config.mlxSourceDir;
+  const outputDir = options?.outputDir || config.outputDir;
+
   console.log('=== MLX Node.js Bindings Generator ===\n');
-  console.log(`Source: ${config.mlxSourceDir}`);
-  console.log(`Output: ${config.outputDir}\n`);
+  console.log(`Source: ${mlxSourceDir}`);
+  console.log(`Output: ${outputDir}\n`);
+
+  // Check if MLX source exists
+  if (!existsSync(mlxSourceDir)) {
+    console.error('ERROR: MLX source not found at:', mlxSourceDir);
+    console.error('');
+    console.error('Run the setup script first:');
+    console.error('  pnpm setup');
+    console.error('');
+    console.error('Or set MLX_SOURCE environment variable:');
+    console.error('  export MLX_SOURCE=/path/to/mlx/python/src');
+    process.exit(1);
+  }
 
   // Ensure output directory exists
-  mkdirSync(config.outputDir, { recursive: true });
+  mkdirSync(outputDir, { recursive: true });
 
   // Parse all binding files
   const parser = new NanobindRegexParser();
   const allBindings: Binding[] = [];
   const bindingsByFile: Map<string, Binding[]> = new Map();
 
-  const files = readdirSync(config.mlxSourceDir).filter(f => f.endsWith('.cpp'));
+  const files = readdirSync(mlxSourceDir).filter(f => f.endsWith('.cpp'));
   console.log(`Parsing ${files.length} source files...\n`);
 
   for (const file of files) {
-    const filePath = join(config.mlxSourceDir, file);
+    const filePath = join(mlxSourceDir, file);
     try {
       const code = readFileSync(filePath, 'utf-8');
       const bindings = parser.parse(code);
@@ -74,15 +115,15 @@ async function main() {
   });
 
   const dts = tsGenerator.generate(allBindings);
-  const dtsPath = join(config.outputDir, 'mlx-node.d.ts');
+  const dtsPath = join(outputDir, 'mlx-node.d.ts');
   writeFileSync(dtsPath, dts);
   console.log(`  Written: ${dtsPath}`);
 
   // Export bindings as JSON for other tools
-  const jsonPath = join(config.outputDir, 'bindings.json');
+  const jsonPath = join(outputDir, 'bindings.json');
   writeFileSync(jsonPath, JSON.stringify({
     generated: new Date().toISOString(),
-    source: config.mlxSourceDir,
+    source: mlxSourceDir,
     stats: {
       functions: functions.length,
       classes: classes.length,
@@ -94,7 +135,7 @@ async function main() {
   console.log(`  Written: ${jsonPath}`);
 
   // Generate a summary markdown
-  const mdPath = join(config.outputDir, 'API.md');
+  const mdPath = join(outputDir, 'API.md');
   writeFileSync(mdPath, generateMarkdownDocs(allBindings));
   console.log(`  Written: ${mdPath}`);
 
@@ -107,16 +148,21 @@ async function main() {
   });
 
   const bindingCpp = napiGenerator.generateBindingCpp(allBindings);
-  const bindingCppPath = join(config.outputDir, 'binding.cpp');
+  const bindingCppPath = join(outputDir, 'binding.cpp');
   writeFileSync(bindingCppPath, bindingCpp);
   console.log(`  Written: ${bindingCppPath}`);
 
   const bindingH = napiGenerator.generateBindingHeader(allBindings);
-  const bindingHPath = join(config.outputDir, 'binding.h');
+  const bindingHPath = join(outputDir, 'binding.h');
   writeFileSync(bindingHPath, bindingH);
   console.log(`  Written: ${bindingHPath}`);
 
   console.log('\n=== Done ===\n');
+
+  return {
+    bindings: allBindings,
+    outputDir,
+  };
 }
 
 function generateMarkdownDocs(bindings: Binding[]): string {
@@ -174,4 +220,8 @@ function generateMarkdownDocs(bindings: Binding[]): string {
   return lines.join('\n');
 }
 
-main().catch(console.error);
+// Run if called directly
+const isMain = import.meta.url === `file://${process.argv[1]}`;
+if (isMain) {
+  generate().catch(console.error);
+}

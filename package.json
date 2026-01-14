@@ -1,22 +1,18 @@
 {
-  "name": "mlx-node",
+  "name": "mlx-node-monorepo",
   "version": "0.1.0",
-  "description": "Node.js bindings for MLX (Apple's ML framework for Apple Silicon)",
-  "main": "lib/index.js",
-  "types": "lib/index.d.ts",
+  "private": true,
+  "description": "Monorepo for mlx-node - Node.js bindings for MLX",
   "type": "module",
   "scripts": {
-    "build:ts": "tsc",
-    "build:native": "cmake-js compile",
-    "build:native:debug": "cmake-js compile --debug",
-    "build": "npm run generate && npm run build:native",
-    "rebuild": "cmake-js rebuild",
-    "clean": "cmake-js clean && rm -rf dist generated",
-    "generate": "npm run build:ts && node dist/generate.js",
-    "test-parser": "npm run build:ts && node dist/test-parser.js",
-    "test": "node --test 'test/**/*.test.js'",
-    "prepare": "npm run build",
-    "install": "cmake-js compile"
+    "setup": "./scripts/setup-mlx-source.sh",
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "generate": "turbo run generate",
+    "build:native": "turbo run build:native",
+    "clean": "turbo run clean && rm -rf node_modules",
+    "check-coverage": "node packages/cli/scripts/check-coverage.js",
+    "validate": "python3 packages/cli/scripts/validate-completeness.py"
   },
   "keywords": [
     "mlx",
@@ -36,22 +32,9 @@
   "engines": {
     "node": ">=18.0.0"
   },
-  "os": [
-    "darwin"
-  ],
-  "cpu": [
-    "arm64",
-    "x64"
-  ],
   "devDependencies": {
-    "@types/node": "^22.0.0",
+    "turbo": "^2.0.0",
     "typescript": "^5.9.3"
   },
-  "dependencies": {
-    "cmake-js": "^7.4.0",
-    "node-addon-api": "^8.5.0"
-  },
-  "binary": {
-    "napi_versions": [8]
-  }
+  "packageManager": "pnpm@9.15.0"
 }

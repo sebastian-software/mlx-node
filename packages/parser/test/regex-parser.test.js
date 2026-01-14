@@ -16,11 +16,11 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // Import parser (need to build first)
 let NanobindRegexParser, parseSignature;
 try {
-  const parser = await import(join(__dirname, '..', 'dist', 'parser', 'regex-parser.js'));
+  const parser = await import(join(__dirname, '..', 'dist', 'index.js'));
   NanobindRegexParser = parser.NanobindRegexParser;
   parseSignature = parser.parseSignature;
 } catch (e) {
-  console.error('Parser not built. Run `npm run build:ts` first.');
+  console.error('Parser not built. Run `pnpm build` first.');
   console.error(e.message);
   process.exit(1);
 }
