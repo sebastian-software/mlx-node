@@ -90,7 +90,24 @@ pnpm build
 pnpm test
 ```
 
+## Attribution
+
+This package is inspired by and partially based on [mlx-lm](https://github.com/ml-explore/mlx-lm) by Apple Inc.
+
+**What is derived from mlx-lm:**
+- Model architectures (Gemma3, GPT-OSS, Phi3) are TypeScript translations of the Python implementations
+- KV cache patterns and generation loop structure
+- Attention and MLP layer patterns
+
+**What is original:**
+- TypeScript type system and interfaces
+- Module base class implementation
+- API design for Node.js ecosystem
+
+mlx-lm is licensed under the MIT License. See the source file headers for full license text.
+
 ## Related
 
 - [mlx-lm](https://github.com/ml-explore/mlx-lm) - Python LLM inference (reference implementation)
+- [MLX](https://github.com/ml-explore/mlx) - Apple's array framework for machine learning
 - [mlx-node](../mlx-node) - Core MLX bindings for Node.js
