@@ -12,7 +12,8 @@
     "rebuild": "cmake-js rebuild",
     "clean": "cmake-js clean && rm -rf generated",
     "test": "node --test 'test/**/*.test.js'",
-    "preinstall": "npm run build:native"
+    "preinstall": "npm run build:native",
+    "check:mlx-version": "node scripts/check-mlx-version.js"
   },
   "keywords": [
     "mlx",

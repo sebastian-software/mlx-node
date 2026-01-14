@@ -12,7 +12,8 @@
     "build:native": "turbo run build:native",
     "clean": "turbo run clean && rm -rf node_modules",
     "check-coverage": "node packages/cli/scripts/check-coverage.js",
-    "validate": "python3 packages/cli/scripts/validate-completeness.py"
+    "validate": "python3 packages/cli/scripts/validate-completeness.py",
+    "check:mlx-version": "pnpm --filter mlx-node check:mlx-version"
   },
   "keywords": [
     "mlx",

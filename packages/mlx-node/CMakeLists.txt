@@ -5,49 +5,83 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # ============================================================================
+# MLX Version Configuration
+# ============================================================================
+
+# Pinned MLX version - update this when upgrading
+# Check for updates: pnpm check:mlx-version
+# Note: Use MLX_GIT_TAG (not MLX_VERSION) to avoid conflict with MLX's own CMake variable
+set(MLX_GIT_TAG "v0.30.3")
+set(MLX_REPOSITORY "https://github.com/ml-explore/mlx.git")
+
+# ============================================================================
 # Options
 # ============================================================================
 
-option(MLX_STUB_MODE "Build stub without MLX (for development)" OFF)
+option(MLX_STUB_MODE "Build stub without MLX (for development/CI)" OFF)
+option(MLX_FETCH "Fetch MLX via FetchContent (recommended)" ON)
 
 # ============================================================================
-# Find Dependencies
+# MLX Dependency
 # ============================================================================
 
 if(NOT MLX_STUB_MODE)
-    # Find MLX
-    set(MLX_SEARCH_PATHS
-        ${MLX_DIR}
-        $ENV{MLX_DIR}
-        /opt/homebrew/lib/cmake/mlx
-        /usr/local/lib/cmake/mlx
-        ${CMAKE_SOURCE_DIR}/deps/mlx
-        ${CMAKE_SOURCE_DIR}/../mlx/build
-    )
+    if(MLX_FETCH)
+        # Use FetchContent to download and build MLX
+        include(FetchContent)
 
-    find_package(MLX CONFIG QUIET PATHS ${MLX_SEARCH_PATHS})
+        message(STATUS "")
+        message(STATUS "=== Fetching MLX ${MLX_GIT_TAG} ===")
+        message(STATUS "Repository: ${MLX_REPOSITORY}")
+        message(STATUS "This may take a few minutes on first build...")
+        message(STATUS "")
 
-    if(NOT MLX_FOUND)
-        message(STATUS "MLX not found via find_package, trying pkg-config...")
-        find_package(PkgConfig QUIET)
-        if(PKG_CONFIG_FOUND)
-            pkg_check_modules(MLX QUIET mlx)
+        FetchContent_Declare(
+            mlx
+            GIT_REPOSITORY ${MLX_REPOSITORY}
+            GIT_TAG        ${MLX_GIT_TAG}
+            GIT_SHALLOW    TRUE
+            GIT_PROGRESS   TRUE
+        )
+
+        # MLX build options
+        set(MLX_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+        set(MLX_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+        set(MLX_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
+        set(MLX_BUILD_PYTHON_BINDINGS OFF CACHE BOOL "" FORCE)
+        set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+
+        FetchContent_MakeAvailable(mlx)
+
+        set(MLX_FOUND TRUE)
+    else()
+        # Try to find system-installed MLX
+        set(MLX_SEARCH_PATHS
+            ${MLX_DIR}
+            $ENV{MLX_DIR}
+            /opt/homebrew/lib/cmake/mlx
+            /usr/local/lib/cmake/mlx
+        )
+
+        find_package(MLX CONFIG QUIET PATHS ${MLX_SEARCH_PATHS})
+
+        if(NOT MLX_FOUND)
+            message(STATUS "")
+            message(STATUS "MLX not found. Options:")
+            message(STATUS "  1. Use -DMLX_FETCH=ON (recommended)")
+            message(STATUS "  2. Set -DMLX_DIR=<path>")
+            message(STATUS "  3. Use -DMLX_STUB_MODE=ON for development")
+            message(STATUS "")
+            message(STATUS "Building in STUB MODE.")
+            set(MLX_STUB_MODE ON)
         endif()
-    endif()
-
-    if(NOT MLX_FOUND)
-        message(STATUS "")
-        message(STATUS "⚠ MLX not found. Building in STUB MODE.")
-        message(STATUS "  To build with MLX, either:")
-        message(STATUS "    1. Install MLX: pip install mlx")
-        message(STATUS "    2. Build MLX from source and set -DMLX_DIR=<path>")
-        message(STATUS "    3. Set MLX_DIR environment variable")
-        message(STATUS "")
-        set(MLX_STUB_MODE ON)
     endif()
 endif()
 
+# ============================================================================
 # Node.js / N-API
+# ============================================================================
+
 include_directories(${CMAKE_JS_INC})
 
 # node-addon-api
@@ -93,11 +127,12 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
 )
 
 # Link against cmake-js provided libraries
-target_link_libraries(${PROJECT_NAME} ${CMAKE_JS_LIB})
+target_link_libraries(${PROJECT_NAME} PRIVATE ${CMAKE_JS_LIB})
 
-# Link against MLX if found
+# Link against MLX
 if(NOT MLX_STUB_MODE AND MLX_FOUND)
-    target_link_libraries(${PROJECT_NAME} mlx)
+    target_link_libraries(${PROJECT_NAME} PRIVATE mlx)
+    target_include_directories(${PROJECT_NAME} PRIVATE ${mlx_SOURCE_DIR})
     target_compile_definitions(${PROJECT_NAME} PRIVATE MLX_AVAILABLE=1)
 else()
     target_compile_definitions(${PROJECT_NAME} PRIVATE MLX_AVAILABLE=0)
@@ -109,7 +144,10 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
     NAPI_CPP_EXCEPTIONS
 )
 
-# macOS specific settings
+# ============================================================================
+# macOS Settings
+# ============================================================================
+
 if(APPLE)
     set_target_properties(${PROJECT_NAME} PROPERTIES
         MACOSX_RPATH ON
@@ -117,29 +155,35 @@ if(APPLE)
     )
 
     if(NOT MLX_STUB_MODE)
-        # For Metal support
+        # Metal framework for GPU support
         find_library(METAL_FRAMEWORK Metal)
         find_library(FOUNDATION_FRAMEWORK Foundation)
+        find_library(ACCELERATE_FRAMEWORK Accelerate)
+
         if(METAL_FRAMEWORK AND FOUNDATION_FRAMEWORK)
-            target_link_libraries(${PROJECT_NAME}
+            target_link_libraries(${PROJECT_NAME} PRIVATE
                 ${METAL_FRAMEWORK}
                 ${FOUNDATION_FRAMEWORK}
             )
+        endif()
+
+        if(ACCELERATE_FRAMEWORK)
+            target_link_libraries(${PROJECT_NAME} PRIVATE ${ACCELERATE_FRAMEWORK})
         endif()
     endif()
 endif()
 
 # ============================================================================
-# Info
+# Build Info
 # ============================================================================
 
 message(STATUS "")
 message(STATUS "=== MLX Node.js Configuration ===")
 if(MLX_STUB_MODE)
-    message(STATUS "Mode: STUB (MLX not available)")
+    message(STATUS "Mode:        STUB (MLX not available)")
 else()
-    message(STATUS "Mode: FULL (with MLX)")
+    message(STATUS "Mode:        FULL (with MLX ${MLX_GIT_TAG})")
 endif()
-message(STATUS "Node Addon API: ${NODE_ADDON_API_DIR}")
-message(STATUS "Output: ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/mlx_node.node")
+message(STATUS "Node API:    ${NODE_ADDON_API_DIR}")
+message(STATUS "Output:      mlx_node.node")
 message(STATUS "")

@@ -14,6 +14,126 @@ export interface NapiGeneratorOptions {
   namespace?: string;
 }
 
+// Functions that are in mlx::core::fast:: namespace
+const FAST_NAMESPACE_FUNCTIONS = new Set([
+  'rope', 'rms_norm', 'layer_norm', 'scaled_dot_product_attention',
+  'affine_quantize', 'affine_dequantize',
+]);
+
+// Functions that are in mlx::core::distributed:: namespace (exclude for now)
+const DISTRIBUTED_FUNCTIONS = new Set([
+  'all_sum', 'all_max', 'all_min', 'all_gather',
+  'send', 'recv', 'recv_like', 'sum_scatter',
+  'init', 'is_available',
+]);
+
+// Functions that need manual implementation (complex lambdas, etc.)
+const MANUAL_IMPLEMENTATION_FUNCTIONS = new Set([
+  'export_function', 'import_function',
+  'metal_kernel', 'cuda_kernel',  // GPU kernel functions need special handling
+  // Functions returning tuples/multiple arrays (need special handling)
+  'qr', 'svd', 'eig', 'eigh', 'lu', 'lu_factor',
+  'broadcast_arrays', 'quantize', 'broadcast_shapes',
+  'jvp', 'vjp', 'value_and_grad', 'grad', 'vmap', 'compile',
+  'divmod',  // Returns tuple[array, array]
+  // Transform functions (take callables)
+  'checkpoint',
+  // Functions with complex parameter types
+  'norm',  // Union[None, int, float, str] for ord parameter
+  'arange',  // Multiple overloads with Union types
+  'linspace',  // scalar type parameters
+  // IO functions with file path handling
+  'save', 'savez', 'savez_compressed', 'load', 'save_safetensors', 'save_gguf',
+  // Functions with *args
+  'einsum', 'einsum_path', 'eval', 'async_eval',
+  // Functions with complex signature or missing in C++ API
+  'scaled_dot_product_attention',  // Has mask_mode string parameter, complex signature
+  'permute_dims',  // Doesn't exist in C++ (use transpose instead)
+  // Functions where C++ requires int but Python has Optional[int]
+  'take', 'take_along_axis', 'put_along_axis',
+  'eye',  // Multiple optional int params
+  // Functions with dtype=None defaulting that doesn't map directly
+  'full', 'zeros', 'ones',
+  // Reduction functions - have complex axis Union[int, Sequence[int], None] type
+  // C++ has separate overloads for int vs std::vector<int>, needs special handling
+  'sum', 'prod', 'min', 'max', 'mean', 'var', 'std',
+  'median', 'logsumexp', 'logcumsumexp',
+  'all', 'any',  // Also have axis union type
+  // Functions with axis parameter issues
+  'argmin', 'argmax',
+  'cumsum', 'cumprod',
+  'sort', 'argsort', 'partition', 'argpartition', 'topk',
+  'softmax', 'log_softmax',
+  // Other problematic signatures
+  'unflatten',  // Shape parameter needs conversion
+  'split', 'array_split',  // Union[int, Sequence[int]] for indices_or_sections
+  'stack', 'concatenate', 'concat',  // Sequence[array] parameter
+  'where',  // Complex overloads
+  // More cumulative functions with Optional[int] axis
+  'cummax', 'cummin',
+  // Functions not in mlx::core namespace or with different names
+  'conj', 'conjugate',  // Complex conjugate - different namespace or doesn't exist
+  // Additional functions with axis issues
+  'flip', 'roll',
+  'swapaxes', 'moveaxis', 'expand_dims', 'squeeze',
+  // Functions with complex types
+  'pad',  // Complex pad_width type
+  'tile', 'repeat',
+  'meshgrid',  // Multiple optional params
+  'conv1d', 'conv2d', 'conv3d', 'conv_general',  // Complex stride/padding types
+  'conv_transpose1d', 'conv_transpose2d', 'conv_transpose3d',  // Transpose convolutions
+  'quantized_matmul', 'gather_qmm', 'gather_mm', 'qqmm',  // Quantization functions
+  'block_masked_mm', 'addmm', 'segmented_mm',  // Special matmul variants
+  // FFT functions with complex axis types
+  'fft', 'ifft', 'fft2', 'ifft2', 'fftn', 'ifftn',
+  'rfft', 'irfft', 'rfft2', 'irfft2', 'rfftn', 'irfftn',
+  'fftshift', 'ifftshift',
+  // Functions with optional axes
+  'slice', 'slice_update',
+  // Random functions with complex shape/key parameters
+  'uniform', 'normal', 'multivariate_normal', 'randint',
+  'bernoulli', 'truncated_normal', 'gumbel', 'categorical', 'laplace', 'permutation',
+  // Linalg functions with complex return types
+  'inv', 'tri_inv', 'cholesky', 'cholesky_inv', 'pinv', 'solve', 'solve_triangular',
+  'cross', 'eigvals', 'eigvalsh',
+  // Functions with multiple complex parameters
+  'tensordot', 'diagonal', 'as_strided',
+  'atleast_1d', 'atleast_2d', 'atleast_3d',
+  // Streams and transforms
+  'exporter', 'export_to_dot',
+  'new_stream', 'stream', 'synchronize',
+  'depends',
+  // Hadamard
+  'hadamard_transform',
+  // Functions that need special handling due to complex defaults
+  'tri', 'tril', 'triu', 'identity',  // Complex dtype/shape handling
+  'asarray', 'zeros_like', 'ones_like',  // Like functions
+  'array_equal', 'allclose', 'isclose',  // Comparison with tolerances
+  'kron', 'inner', 'outer',  // Linear algebra
+  'view', 'contiguous',  // Memory layout
+  'diag', 'trace',  // Diagonal operations
+  'nan_to_num',  // NaN handling
+  'dequantize', 'convolve',  // Quantization and convolution
+  'clip', 'issubdtype',  // Type operations
+  'bitwise_and', 'bitwise_or', 'bitwise_xor', 'bitwise_invert',
+  'left_shift', 'right_shift',  // Bitwise ops (need array or scalar handling)
+  'seed', 'key', 'split',  // Random key functions (name collision with random.split)
+  'disable_compile', 'enable_compile',  // Compiler control
+  'default_stream', 'set_default_stream',  // Stream functions
+  // Functions with optional array params (mlx::core::array has no default constructor)
+  'rms_norm', 'layer_norm', 'rope',  // Fast namespace functions with optional weight/bias
+  'transpose',  // Has complex axes parameter (Sequence or std::vector)
+  // Additional device/memory functions
+  'default_device', 'set_default_device',
+  'get_active_memory', 'get_peak_memory', 'reset_peak_memory',
+  'get_cache_memory', 'set_memory_limit', 'set_cache_limit',
+  'set_wired_limit', 'clear_cache',
+  // Reshape and flatten have shape issues
+  'reshape', 'flatten',
+  // Real and imag might not exist for non-complex arrays
+  'real', 'imag',
+]);
+
 export class NapiGenerator {
   private options: Required<NapiGeneratorOptions>;
 
@@ -41,9 +161,13 @@ export class NapiGenerator {
     lines.push(this.generateTypeConverters());
     lines.push('');
 
-    // Generate function wrappers
+    // Generate function wrappers (deduplicate by name to avoid multiple definitions)
     const functions = bindings.filter((b): b is FunctionBinding => b.type === 'function');
+    const seenFunctions = new Set<string>();
     for (const fn of functions) {
+      if (seenFunctions.has(fn.name)) continue;
+      seenFunctions.add(fn.name);
+
       const wrapper = this.generateFunctionWrapper(fn);
       if (wrapper) {
         lines.push(wrapper);
@@ -186,17 +310,17 @@ mlx::core::array NapiToArray(const Napi::Value& value) {
       case napi_float32_array: {
         Napi::Float32Array arr = value.As<Napi::Float32Array>();
         std::vector<float> data(arr.Data(), arr.Data() + length);
-        return mlx::core::array(data.data(), {static_cast<int>(length)}, mlx::core::float32);
+        return mlx::core::array(data.begin(), {static_cast<int>(length)}, mlx::core::float32);
       }
       case napi_float64_array: {
         Napi::Float64Array arr = value.As<Napi::Float64Array>();
         std::vector<double> data(arr.Data(), arr.Data() + length);
-        return mlx::core::array(data.data(), {static_cast<int>(length)}, mlx::core::float64);
+        return mlx::core::array(data.begin(), {static_cast<int>(length)}, mlx::core::float64);
       }
       case napi_int32_array: {
         Napi::Int32Array arr = value.As<Napi::Int32Array>();
         std::vector<int32_t> data(arr.Data(), arr.Data() + length);
-        return mlx::core::array(data.data(), {static_cast<int>(length)}, mlx::core::int32);
+        return mlx::core::array(data.begin(), {static_cast<int>(length)}, mlx::core::int32);
       }
       default:
         break;
@@ -215,10 +339,58 @@ mlx::core::array NapiToArray(const Napi::Value& value) {
     // Check first element to determine type and nesting
     Napi::Value first = arr.Get(uint32_t(0));
 
+    // Handle array of TypedArrays (e.g., [Float32Array([1,2]), Float32Array([3,4])])
+    if (first.IsTypedArray()) {
+      Napi::TypedArray firstTyped = first.As<Napi::TypedArray>();
+      size_t innerLength = firstTyped.ElementLength();
+      mlx::core::Shape shape = {static_cast<int>(length), static_cast<int>(innerLength)};
+
+      if (firstTyped.TypedArrayType() == napi_float32_array) {
+        std::vector<float> flat_data;
+        flat_data.reserve(length * innerLength);
+        for (uint32_t i = 0; i < length; i++) {
+          Napi::Value elem = arr.Get(i);
+          if (elem.IsTypedArray()) {
+            Napi::Float32Array typed = elem.As<Napi::Float32Array>();
+            for (size_t j = 0; j < typed.ElementLength(); j++) {
+              flat_data.push_back(typed[j]);
+            }
+          }
+        }
+        return mlx::core::array(flat_data.begin(), shape, mlx::core::float32);
+      } else if (firstTyped.TypedArrayType() == napi_float64_array) {
+        std::vector<double> flat_data;
+        flat_data.reserve(length * innerLength);
+        for (uint32_t i = 0; i < length; i++) {
+          Napi::Value elem = arr.Get(i);
+          if (elem.IsTypedArray()) {
+            Napi::Float64Array typed = elem.As<Napi::Float64Array>();
+            for (size_t j = 0; j < typed.ElementLength(); j++) {
+              flat_data.push_back(typed[j]);
+            }
+          }
+        }
+        return mlx::core::array(flat_data.begin(), shape, mlx::core::float64);
+      } else if (firstTyped.TypedArrayType() == napi_int32_array) {
+        std::vector<int32_t> flat_data;
+        flat_data.reserve(length * innerLength);
+        for (uint32_t i = 0; i < length; i++) {
+          Napi::Value elem = arr.Get(i);
+          if (elem.IsTypedArray()) {
+            Napi::Int32Array typed = elem.As<Napi::Int32Array>();
+            for (size_t j = 0; j < typed.ElementLength(); j++) {
+              flat_data.push_back(typed[j]);
+            }
+          }
+        }
+        return mlx::core::array(flat_data.begin(), shape, mlx::core::int32);
+      }
+    }
+
     if (first.IsArray()) {
-      // Nested array - need to flatten and determine shape
-      std::vector<double> flat_data;
-      std::vector<int> shape;
+      // Nested array - need to flatten and determine shape (use float32 for GPU compatibility)
+      std::vector<float> flat_data;
+      mlx::core::Shape shape;
 
       std::function<void(Napi::Array, int)> flatten = [&](Napi::Array a, int depth) {
         uint32_t len = a.Length();
@@ -230,26 +402,26 @@ mlx::core::array NapiToArray(const Napi::Value& value) {
           if (elem.IsArray()) {
             flatten(elem.As<Napi::Array>(), depth + 1);
           } else if (elem.IsNumber()) {
-            flat_data.push_back(elem.As<Napi::Number>().DoubleValue());
+            flat_data.push_back(static_cast<float>(elem.As<Napi::Number>().DoubleValue()));
           }
         }
       };
 
       flatten(arr, 0);
-      return mlx::core::array(flat_data.data(), shape, mlx::core::float64);
+      return mlx::core::array(flat_data.begin(), shape, mlx::core::float32);
     } else {
-      // Flat array of numbers
-      std::vector<double> data;
+      // Flat array of numbers (use float32 for GPU compatibility)
+      std::vector<float> data;
       data.reserve(length);
       for (uint32_t i = 0; i < length; i++) {
         Napi::Value elem = arr.Get(i);
         if (elem.IsNumber()) {
-          data.push_back(elem.As<Napi::Number>().DoubleValue());
+          data.push_back(static_cast<float>(elem.As<Napi::Number>().DoubleValue()));
         } else if (elem.IsBoolean()) {
-          data.push_back(elem.As<Napi::Boolean>().Value() ? 1.0 : 0.0);
+          data.push_back(elem.As<Napi::Boolean>().Value() ? 1.0f : 0.0f);
         }
       }
-      return mlx::core::array(data.data(), {static_cast<int>(data.size())}, mlx::core::float64);
+      return mlx::core::array(data.begin(), {static_cast<int>(data.size())}, mlx::core::float32);
     }
   }
 
@@ -331,6 +503,16 @@ mlx::core::StreamOrDevice NapiToStreamOrDevice(const Napi::Value& value) {
   }
 
   private generateFunctionWrapper(fn: FunctionBinding): string | null {
+    // Skip distributed functions - they need special Group handling
+    if (DISTRIBUTED_FUNCTIONS.has(fn.name)) {
+      return null;
+    }
+
+    // Skip functions that need manual implementation
+    if (MANUAL_IMPLEMENTATION_FUNCTIONS.has(fn.name)) {
+      return this.generateGenericWrapper(fn);
+    }
+
     // Skip functions without signatures - we can't generate proper wrappers
     if (!fn.signature) {
       return this.generateGenericWrapper(fn);
@@ -421,9 +603,9 @@ mlx::core::StreamOrDevice NapiToStreamOrDevice(const Napi::Value& value) {
           lines.push(`  std::string ${param.name} = info[${paramIndex}].As<Napi::String>().Utf8Value();`);
         }
         cppArgs.push(param.name);
-      } else if (param.type?.includes('Sequence[int]') || param.type?.includes('List[int]')) {
-        // Vector of ints (e.g., shape)
-        lines.push(`  std::vector<int> ${param.name};`);
+      } else if (param.type?.includes('Sequence[int]') || param.type?.includes('List[int]') || param.type?.includes('Tuple[int')) {
+        // Vector of ints (e.g., shape) - use mlx::core::Shape (SmallVector<int>)
+        lines.push(`  mlx::core::Shape ${param.name};`);
         lines.push(`  if (info.Length() > ${paramIndex} && info[${paramIndex}].IsArray()) {`);
         lines.push(`    Napi::Array arr = info[${paramIndex}].As<Napi::Array>();`);
         lines.push('    for (uint32_t i = 0; i < arr.Length(); i++) {');
@@ -431,9 +613,58 @@ mlx::core::StreamOrDevice NapiToStreamOrDevice(const Napi::Value& value) {
         lines.push('    }');
         lines.push('  }');
         cppArgs.push(param.name);
+      } else if (param.type?.startsWith('Optional[float]')) {
+        // Optional float parameter
+        lines.push(`  std::optional<float> ${param.name} = std::nullopt;`);
+        lines.push(`  if (info.Length() > ${paramIndex} && !info[${paramIndex}].IsUndefined() && !info[${paramIndex}].IsNull()) {`);
+        lines.push(`    ${param.name} = info[${paramIndex}].As<Napi::Number>().FloatValue();`);
+        lines.push('  }');
+        cppArgs.push(param.name);
+      } else if (param.type?.startsWith('Optional[int]')) {
+        // Optional int parameter
+        lines.push(`  std::optional<int> ${param.name} = std::nullopt;`);
+        lines.push(`  if (info.Length() > ${paramIndex} && !info[${paramIndex}].IsUndefined() && !info[${paramIndex}].IsNull()) {`);
+        lines.push(`    ${param.name} = info[${paramIndex}].As<Napi::Number>().Int32Value();`);
+        lines.push('  }');
+        cppArgs.push(param.name);
+      } else if (param.type?.startsWith('Optional[array]')) {
+        // Optional array parameter
+        lines.push(`  std::optional<mlx::core::array> ${param.name} = std::nullopt;`);
+        lines.push(`  if (info.Length() > ${paramIndex} && !info[${paramIndex}].IsUndefined() && !info[${paramIndex}].IsNull()) {`);
+        lines.push(`    ${param.name} = NapiToArray(info[${paramIndex}]);`);
+        lines.push('  }');
+        cppArgs.push(param.name);
+      } else if (param.type?.includes('Union[int, array]') || param.type?.includes('Union[array, int]')) {
+        // Union type that can be int or array - convert to array
+        lines.push(`  mlx::core::array ${param.name};`);
+        lines.push(`  if (info.Length() > ${paramIndex}) {`);
+        lines.push(`    if (info[${paramIndex}].IsNumber()) {`);
+        lines.push(`      ${param.name} = mlx::core::array(info[${paramIndex}].As<Napi::Number>().Int32Value());`);
+        lines.push('    } else {');
+        lines.push(`      ${param.name} = NapiToArray(info[${paramIndex}]);`);
+        lines.push('    }');
+        lines.push('  }');
+        cppArgs.push(param.name);
+      } else if (param.type?.includes('Dtype')) {
+        // Dtype parameter - None means use default (float32)
+        let defaultVal = 'mlx::core::float32';
+        if (param.default && param.default.toLowerCase() !== 'none') {
+          defaultVal = `mlx::core::${param.default.toLowerCase()}`;
+        }
+        lines.push(`  mlx::core::Dtype ${param.name} = ${defaultVal};`);
+        lines.push(`  if (info.Length() > ${paramIndex} && !info[${paramIndex}].IsUndefined()) {`);
+        lines.push(`    ${param.name} = NapiToDtype(info[${paramIndex}]);`);
+        lines.push('  }');
+        cppArgs.push(param.name);
       } else {
-        // Generic fallback
-        cppArgs.push(`/* ${param.name}: ${param.type} */`);
+        // Skip unhandled parameter types - don't add placeholder comments
+        // This will cause a compile error which is better than generating invalid code
+        console.warn(`Warning: Unhandled parameter type for ${fn.name}.${param.name}: ${param.type}`);
+        cppArgs.push(param.name);
+        // Add a default declaration to avoid undefined variable
+        if (param.isOptional) {
+          lines.push(`  // TODO: Handle ${param.type} for ${param.name}`);
+        }
       }
 
       paramIndex++;
@@ -441,8 +672,16 @@ mlx::core::StreamOrDevice NapiToStreamOrDevice(const Napi::Value& value) {
 
     lines.push('');
 
-    // Generate the actual call
-    const cppFn = fn.cppFunction || `mlx::core::${fn.name}`;
+    // Generate the actual call - determine correct namespace
+    let cppFn: string;
+    if (fn.cppFunction) {
+      // Replace mx:: with mlx::core:: (mx:: is a nanobind alias used in MLX Python bindings)
+      cppFn = fn.cppFunction.replace(/\bmx::/g, 'mlx::core::');
+    } else if (FAST_NAMESPACE_FUNCTIONS.has(fn.name)) {
+      cppFn = `mlx::core::fast::${fn.name}`;
+    } else {
+      cppFn = `mlx::core::${fn.name}`;
+    }
     const returnType = parsed.returnType;
 
     if (returnType === 'None' || returnType === 'void' || !returnType) {
@@ -475,12 +714,635 @@ mlx::core::StreamOrDevice NapiToStreamOrDevice(const Napi::Value& value) {
   private generateGenericWrapper(fn: FunctionBinding): string {
     const wrapperName = `Wrap_${fn.name}`;
 
+    // Check for manual implementations of critical functions
+    const manualImpl = this.getManualImplementation(fn.name);
+    if (manualImpl) {
+      return manualImpl;
+    }
+
     return `// TODO: ${fn.name} - needs manual implementation (no signature available)
 Napi::Value ${wrapperName}(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   throw Napi::Error::New(env, "${fn.name} is not yet implemented");
   return env.Undefined();
 }`;
+  }
+
+  private getManualImplementation(name: string): string | null {
+    const implementations: Record<string, string> = {
+      // Reshape - essential for tensor manipulation
+      'reshape': `Napi::Value Wrap_reshape(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (info.Length() < 2) {
+    throw Napi::TypeError::New(env, "reshape requires array and shape arguments");
+  }
+  mlx::core::array a = NapiToArray(info[0]);
+  mlx::core::Shape shape;
+  if (info[1].IsArray()) {
+    Napi::Array arr = info[1].As<Napi::Array>();
+    for (uint32_t i = 0; i < arr.Length(); i++) {
+      shape.push_back(arr.Get(i).As<Napi::Number>().Int32Value());
+    }
+  }
+  mlx::core::StreamOrDevice stream = {};
+  if (info.Length() > 2 && !info[2].IsUndefined()) {
+    stream = NapiToStreamOrDevice(info[2]);
+  }
+  mlx::core::array result = mlx::core::reshape(a, shape, stream);
+  return ArrayToNapi(env, result);
+}`,
+      // Flatten
+      'flatten': `Napi::Value Wrap_flatten(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (info.Length() < 1) {
+    throw Napi::TypeError::New(env, "flatten requires an array argument");
+  }
+  mlx::core::array a = NapiToArray(info[0]);
+  int start_axis = 0;
+  int end_axis = -1;
+  if (info.Length() > 1 && !info[1].IsUndefined()) {
+    start_axis = info[1].As<Napi::Number>().Int32Value();
+  }
+  if (info.Length() > 2 && !info[2].IsUndefined()) {
+    end_axis = info[2].As<Napi::Number>().Int32Value();
+  }
+  mlx::core::StreamOrDevice stream = {};
+  if (info.Length() > 3 && !info[3].IsUndefined()) {
+    stream = NapiToStreamOrDevice(info[3]);
+  }
+  mlx::core::array result = mlx::core::flatten(a, start_axis, end_axis, stream);
+  return ArrayToNapi(env, result);
+}`,
+      // Transpose
+      'transpose': `Napi::Value Wrap_transpose(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (info.Length() < 1) {
+    throw Napi::TypeError::New(env, "transpose requires an array argument");
+  }
+  mlx::core::array a = NapiToArray(info[0]);
+  mlx::core::StreamOrDevice stream = {};
+
+  if (info.Length() > 1 && info[1].IsArray()) {
+    // transpose(a, axes)
+    std::vector<int> axes;
+    Napi::Array arr = info[1].As<Napi::Array>();
+    for (uint32_t i = 0; i < arr.Length(); i++) {
+      axes.push_back(arr.Get(i).As<Napi::Number>().Int32Value());
+    }
+    if (info.Length() > 2 && !info[2].IsUndefined()) {
+      stream = NapiToStreamOrDevice(info[2]);
+    }
+    mlx::core::array result = mlx::core::transpose(a, axes, stream);
+    return ArrayToNapi(env, result);
+  } else {
+    // transpose(a) - reverse all axes
+    if (info.Length() > 1 && !info[1].IsUndefined()) {
+      stream = NapiToStreamOrDevice(info[1]);
+    }
+    mlx::core::array result = mlx::core::transpose(a, stream);
+    return ArrayToNapi(env, result);
+  }
+}`,
+      // Sum reduction
+      'sum': `Napi::Value Wrap_sum(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (info.Length() < 1) {
+    throw Napi::TypeError::New(env, "sum requires an array argument");
+  }
+  mlx::core::array a = NapiToArray(info[0]);
+  bool keepdims = false;
+  mlx::core::StreamOrDevice stream = {};
+
+  if (info.Length() == 1 || (info.Length() > 1 && info[1].IsUndefined())) {
+    // sum(a) - sum all elements
+    mlx::core::array result = mlx::core::sum(a, keepdims, stream);
+    return ArrayToNapi(env, result);
+  } else if (info[1].IsNumber()) {
+    // sum(a, axis)
+    int axis = info[1].As<Napi::Number>().Int32Value();
+    if (info.Length() > 2 && !info[2].IsUndefined()) {
+      keepdims = info[2].As<Napi::Boolean>().Value();
+    }
+    if (info.Length() > 3 && !info[3].IsUndefined()) {
+      stream = NapiToStreamOrDevice(info[3]);
+    }
+    mlx::core::array result = mlx::core::sum(a, axis, keepdims, stream);
+    return ArrayToNapi(env, result);
+  } else if (info[1].IsArray()) {
+    // sum(a, axes)
+    std::vector<int> axes;
+    Napi::Array arr = info[1].As<Napi::Array>();
+    for (uint32_t i = 0; i < arr.Length(); i++) {
+      axes.push_back(arr.Get(i).As<Napi::Number>().Int32Value());
+    }
+    if (info.Length() > 2 && !info[2].IsUndefined()) {
+      keepdims = info[2].As<Napi::Boolean>().Value();
+    }
+    if (info.Length() > 3 && !info[3].IsUndefined()) {
+      stream = NapiToStreamOrDevice(info[3]);
+    }
+    mlx::core::array result = mlx::core::sum(a, axes, keepdims, stream);
+    return ArrayToNapi(env, result);
+  }
+
+  mlx::core::array result = mlx::core::sum(a, keepdims, stream);
+  return ArrayToNapi(env, result);
+}`,
+      // Mean reduction
+      'mean': `Napi::Value Wrap_mean(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (info.Length() < 1) {
+    throw Napi::TypeError::New(env, "mean requires an array argument");
+  }
+  mlx::core::array a = NapiToArray(info[0]);
+  bool keepdims = false;
+  mlx::core::StreamOrDevice stream = {};
+
+  if (info.Length() == 1 || (info.Length() > 1 && info[1].IsUndefined())) {
+    mlx::core::array result = mlx::core::mean(a, keepdims, stream);
+    return ArrayToNapi(env, result);
+  } else if (info[1].IsNumber()) {
+    int axis = info[1].As<Napi::Number>().Int32Value();
+    if (info.Length() > 2 && !info[2].IsUndefined()) {
+      keepdims = info[2].As<Napi::Boolean>().Value();
+    }
+    if (info.Length() > 3 && !info[3].IsUndefined()) {
+      stream = NapiToStreamOrDevice(info[3]);
+    }
+    mlx::core::array result = mlx::core::mean(a, axis, keepdims, stream);
+    return ArrayToNapi(env, result);
+  } else if (info[1].IsArray()) {
+    std::vector<int> axes;
+    Napi::Array arr = info[1].As<Napi::Array>();
+    for (uint32_t i = 0; i < arr.Length(); i++) {
+      axes.push_back(arr.Get(i).As<Napi::Number>().Int32Value());
+    }
+    if (info.Length() > 2 && !info[2].IsUndefined()) {
+      keepdims = info[2].As<Napi::Boolean>().Value();
+    }
+    if (info.Length() > 3 && !info[3].IsUndefined()) {
+      stream = NapiToStreamOrDevice(info[3]);
+    }
+    mlx::core::array result = mlx::core::mean(a, axes, keepdims, stream);
+    return ArrayToNapi(env, result);
+  }
+
+  mlx::core::array result = mlx::core::mean(a, keepdims, stream);
+  return ArrayToNapi(env, result);
+}`,
+      // Max reduction
+      'max': `Napi::Value Wrap_max(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (info.Length() < 1) {
+    throw Napi::TypeError::New(env, "max requires an array argument");
+  }
+  mlx::core::array a = NapiToArray(info[0]);
+  bool keepdims = false;
+  mlx::core::StreamOrDevice stream = {};
+
+  if (info.Length() == 1 || (info.Length() > 1 && info[1].IsUndefined())) {
+    mlx::core::array result = mlx::core::max(a, keepdims, stream);
+    return ArrayToNapi(env, result);
+  } else if (info[1].IsNumber()) {
+    int axis = info[1].As<Napi::Number>().Int32Value();
+    if (info.Length() > 2 && !info[2].IsUndefined()) {
+      keepdims = info[2].As<Napi::Boolean>().Value();
+    }
+    if (info.Length() > 3 && !info[3].IsUndefined()) {
+      stream = NapiToStreamOrDevice(info[3]);
+    }
+    mlx::core::array result = mlx::core::max(a, axis, keepdims, stream);
+    return ArrayToNapi(env, result);
+  } else if (info[1].IsArray()) {
+    std::vector<int> axes;
+    Napi::Array arr = info[1].As<Napi::Array>();
+    for (uint32_t i = 0; i < arr.Length(); i++) {
+      axes.push_back(arr.Get(i).As<Napi::Number>().Int32Value());
+    }
+    if (info.Length() > 2 && !info[2].IsUndefined()) {
+      keepdims = info[2].As<Napi::Boolean>().Value();
+    }
+    if (info.Length() > 3 && !info[3].IsUndefined()) {
+      stream = NapiToStreamOrDevice(info[3]);
+    }
+    mlx::core::array result = mlx::core::max(a, axes, keepdims, stream);
+    return ArrayToNapi(env, result);
+  }
+
+  mlx::core::array result = mlx::core::max(a, keepdims, stream);
+  return ArrayToNapi(env, result);
+}`,
+      // Softmax
+      'softmax': `Napi::Value Wrap_softmax(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (info.Length() < 1) {
+    throw Napi::TypeError::New(env, "softmax requires an array argument");
+  }
+  mlx::core::array a = NapiToArray(info[0]);
+  int axis = -1;
+  if (info.Length() > 1 && !info[1].IsUndefined()) {
+    axis = info[1].As<Napi::Number>().Int32Value();
+  }
+  mlx::core::StreamOrDevice stream = {};
+  if (info.Length() > 2 && !info[2].IsUndefined()) {
+    stream = NapiToStreamOrDevice(info[2]);
+  }
+  mlx::core::array result = mlx::core::softmax(a, axis, true, stream);
+  return ArrayToNapi(env, result);
+}`,
+      // Zeros
+      'zeros': `Napi::Value Wrap_zeros(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (info.Length() < 1 || !info[0].IsArray()) {
+    throw Napi::TypeError::New(env, "zeros requires a shape array");
+  }
+  mlx::core::Shape shape;
+  Napi::Array arr = info[0].As<Napi::Array>();
+  for (uint32_t i = 0; i < arr.Length(); i++) {
+    shape.push_back(arr.Get(i).As<Napi::Number>().Int32Value());
+  }
+  mlx::core::Dtype dtype = mlx::core::float32;
+  if (info.Length() > 1 && !info[1].IsUndefined()) {
+    dtype = NapiToDtype(info[1]);
+  }
+  mlx::core::StreamOrDevice stream = {};
+  if (info.Length() > 2 && !info[2].IsUndefined()) {
+    stream = NapiToStreamOrDevice(info[2]);
+  }
+  mlx::core::array result = mlx::core::zeros(shape, dtype, stream);
+  return ArrayToNapi(env, result);
+}`,
+      // Ones
+      'ones': `Napi::Value Wrap_ones(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (info.Length() < 1 || !info[0].IsArray()) {
+    throw Napi::TypeError::New(env, "ones requires a shape array");
+  }
+  mlx::core::Shape shape;
+  Napi::Array arr = info[0].As<Napi::Array>();
+  for (uint32_t i = 0; i < arr.Length(); i++) {
+    shape.push_back(arr.Get(i).As<Napi::Number>().Int32Value());
+  }
+  mlx::core::Dtype dtype = mlx::core::float32;
+  if (info.Length() > 1 && !info[1].IsUndefined()) {
+    dtype = NapiToDtype(info[1]);
+  }
+  mlx::core::StreamOrDevice stream = {};
+  if (info.Length() > 2 && !info[2].IsUndefined()) {
+    stream = NapiToStreamOrDevice(info[2]);
+  }
+  mlx::core::array result = mlx::core::ones(shape, dtype, stream);
+  return ArrayToNapi(env, result);
+}`,
+      // Argmax
+      'argmax': `Napi::Value Wrap_argmax(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (info.Length() < 1) {
+    throw Napi::TypeError::New(env, "argmax requires an array argument");
+  }
+  mlx::core::array a = NapiToArray(info[0]);
+  bool keepdims = false;
+  mlx::core::StreamOrDevice stream = {};
+
+  if (info.Length() == 1 || (info.Length() > 1 && info[1].IsUndefined())) {
+    mlx::core::array result = mlx::core::argmax(a, keepdims, stream);
+    return ArrayToNapi(env, result);
+  }
+
+  int axis = info[1].As<Napi::Number>().Int32Value();
+  if (info.Length() > 2 && !info[2].IsUndefined()) {
+    keepdims = info[2].As<Napi::Boolean>().Value();
+  }
+  if (info.Length() > 3 && !info[3].IsUndefined()) {
+    stream = NapiToStreamOrDevice(info[3]);
+  }
+  mlx::core::array result = mlx::core::argmax(a, axis, keepdims, stream);
+  return ArrayToNapi(env, result);
+}`,
+      // Eval - synchronously evaluate arrays
+      'eval': `Napi::Value Wrap_eval(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  std::vector<mlx::core::array> arrays;
+  for (size_t i = 0; i < info.Length(); i++) {
+    if (!info[i].IsUndefined()) {
+      arrays.push_back(NapiToArray(info[i]));
+    }
+  }
+  mlx::core::eval(arrays);
+  return env.Undefined();
+}`,
+      // Min reduction
+      'min': `Napi::Value Wrap_min(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (info.Length() < 1) {
+    throw Napi::TypeError::New(env, "min requires an array argument");
+  }
+  mlx::core::array a = NapiToArray(info[0]);
+  bool keepdims = false;
+  mlx::core::StreamOrDevice stream = {};
+
+  if (info.Length() == 1 || (info.Length() > 1 && info[1].IsUndefined())) {
+    mlx::core::array result = mlx::core::min(a, keepdims, stream);
+    return ArrayToNapi(env, result);
+  } else if (info[1].IsNumber()) {
+    int axis = info[1].As<Napi::Number>().Int32Value();
+    if (info.Length() > 2 && !info[2].IsUndefined()) {
+      keepdims = info[2].As<Napi::Boolean>().Value();
+    }
+    if (info.Length() > 3 && !info[3].IsUndefined()) {
+      stream = NapiToStreamOrDevice(info[3]);
+    }
+    mlx::core::array result = mlx::core::min(a, axis, keepdims, stream);
+    return ArrayToNapi(env, result);
+  } else if (info[1].IsArray()) {
+    std::vector<int> axes;
+    Napi::Array arr = info[1].As<Napi::Array>();
+    for (uint32_t i = 0; i < arr.Length(); i++) {
+      axes.push_back(arr.Get(i).As<Napi::Number>().Int32Value());
+    }
+    if (info.Length() > 2 && !info[2].IsUndefined()) {
+      keepdims = info[2].As<Napi::Boolean>().Value();
+    }
+    if (info.Length() > 3 && !info[3].IsUndefined()) {
+      stream = NapiToStreamOrDevice(info[3]);
+    }
+    mlx::core::array result = mlx::core::min(a, axes, keepdims, stream);
+    return ArrayToNapi(env, result);
+  }
+
+  mlx::core::array result = mlx::core::min(a, keepdims, stream);
+  return ArrayToNapi(env, result);
+}`,
+      // Argmin
+      'argmin': `Napi::Value Wrap_argmin(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (info.Length() < 1) {
+    throw Napi::TypeError::New(env, "argmin requires an array argument");
+  }
+  mlx::core::array a = NapiToArray(info[0]);
+  bool keepdims = false;
+  mlx::core::StreamOrDevice stream = {};
+
+  if (info.Length() == 1 || (info.Length() > 1 && info[1].IsUndefined())) {
+    mlx::core::array result = mlx::core::argmin(a, keepdims, stream);
+    return ArrayToNapi(env, result);
+  }
+
+  int axis = info[1].As<Napi::Number>().Int32Value();
+  if (info.Length() > 2 && !info[2].IsUndefined()) {
+    keepdims = info[2].As<Napi::Boolean>().Value();
+  }
+  if (info.Length() > 3 && !info[3].IsUndefined()) {
+    stream = NapiToStreamOrDevice(info[3]);
+  }
+  mlx::core::array result = mlx::core::argmin(a, axis, keepdims, stream);
+  return ArrayToNapi(env, result);
+}`,
+      // Prod reduction
+      'prod': `Napi::Value Wrap_prod(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (info.Length() < 1) {
+    throw Napi::TypeError::New(env, "prod requires an array argument");
+  }
+  mlx::core::array a = NapiToArray(info[0]);
+  bool keepdims = false;
+  mlx::core::StreamOrDevice stream = {};
+
+  if (info.Length() == 1 || (info.Length() > 1 && info[1].IsUndefined())) {
+    mlx::core::array result = mlx::core::prod(a, keepdims, stream);
+    return ArrayToNapi(env, result);
+  } else if (info[1].IsNumber()) {
+    int axis = info[1].As<Napi::Number>().Int32Value();
+    if (info.Length() > 2 && !info[2].IsUndefined()) {
+      keepdims = info[2].As<Napi::Boolean>().Value();
+    }
+    if (info.Length() > 3 && !info[3].IsUndefined()) {
+      stream = NapiToStreamOrDevice(info[3]);
+    }
+    mlx::core::array result = mlx::core::prod(a, axis, keepdims, stream);
+    return ArrayToNapi(env, result);
+  }
+
+  mlx::core::array result = mlx::core::prod(a, keepdims, stream);
+  return ArrayToNapi(env, result);
+}`,
+      // Squeeze
+      'squeeze': `Napi::Value Wrap_squeeze(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (info.Length() < 1) {
+    throw Napi::TypeError::New(env, "squeeze requires an array argument");
+  }
+  mlx::core::array a = NapiToArray(info[0]);
+  mlx::core::StreamOrDevice stream = {};
+
+  if (info.Length() == 1 || (info.Length() > 1 && info[1].IsUndefined())) {
+    // Squeeze all axes with size 1
+    if (info.Length() > 1 && !info[1].IsUndefined()) {
+      stream = NapiToStreamOrDevice(info[1]);
+    }
+    mlx::core::array result = mlx::core::squeeze(a, stream);
+    return ArrayToNapi(env, result);
+  } else if (info[1].IsNumber()) {
+    int axis = info[1].As<Napi::Number>().Int32Value();
+    if (info.Length() > 2 && !info[2].IsUndefined()) {
+      stream = NapiToStreamOrDevice(info[2]);
+    }
+    mlx::core::array result = mlx::core::squeeze(a, axis, stream);
+    return ArrayToNapi(env, result);
+  } else if (info[1].IsArray()) {
+    std::vector<int> axes;
+    Napi::Array arr = info[1].As<Napi::Array>();
+    for (uint32_t i = 0; i < arr.Length(); i++) {
+      axes.push_back(arr.Get(i).As<Napi::Number>().Int32Value());
+    }
+    if (info.Length() > 2 && !info[2].IsUndefined()) {
+      stream = NapiToStreamOrDevice(info[2]);
+    }
+    mlx::core::array result = mlx::core::squeeze(a, axes, stream);
+    return ArrayToNapi(env, result);
+  }
+
+  mlx::core::array result = mlx::core::squeeze(a, stream);
+  return ArrayToNapi(env, result);
+}`,
+      // Expand dims
+      'expand_dims': `Napi::Value Wrap_expand_dims(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (info.Length() < 2) {
+    throw Napi::TypeError::New(env, "expand_dims requires array and axis arguments");
+  }
+  mlx::core::array a = NapiToArray(info[0]);
+  mlx::core::StreamOrDevice stream = {};
+
+  if (info[1].IsNumber()) {
+    int axis = info[1].As<Napi::Number>().Int32Value();
+    if (info.Length() > 2 && !info[2].IsUndefined()) {
+      stream = NapiToStreamOrDevice(info[2]);
+    }
+    mlx::core::array result = mlx::core::expand_dims(a, axis, stream);
+    return ArrayToNapi(env, result);
+  } else if (info[1].IsArray()) {
+    std::vector<int> axes;
+    Napi::Array arr = info[1].As<Napi::Array>();
+    for (uint32_t i = 0; i < arr.Length(); i++) {
+      axes.push_back(arr.Get(i).As<Napi::Number>().Int32Value());
+    }
+    if (info.Length() > 2 && !info[2].IsUndefined()) {
+      stream = NapiToStreamOrDevice(info[2]);
+    }
+    mlx::core::array result = mlx::core::expand_dims(a, axes, stream);
+    return ArrayToNapi(env, result);
+  }
+
+  throw Napi::TypeError::New(env, "axis must be a number or array of numbers");
+}`,
+      // Concatenate
+      'concatenate': `Napi::Value Wrap_concatenate(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (info.Length() < 1 || !info[0].IsArray()) {
+    throw Napi::TypeError::New(env, "concatenate requires an array of arrays");
+  }
+
+  std::vector<mlx::core::array> arrays;
+  Napi::Array arr = info[0].As<Napi::Array>();
+  for (uint32_t i = 0; i < arr.Length(); i++) {
+    arrays.push_back(NapiToArray(arr.Get(i)));
+  }
+
+  int axis = 0;
+  if (info.Length() > 1 && !info[1].IsUndefined()) {
+    axis = info[1].As<Napi::Number>().Int32Value();
+  }
+  mlx::core::StreamOrDevice stream = {};
+  if (info.Length() > 2 && !info[2].IsUndefined()) {
+    stream = NapiToStreamOrDevice(info[2]);
+  }
+
+  mlx::core::array result = mlx::core::concatenate(arrays, axis, stream);
+  return ArrayToNapi(env, result);
+}`,
+      // Stack
+      'stack': `Napi::Value Wrap_stack(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (info.Length() < 1 || !info[0].IsArray()) {
+    throw Napi::TypeError::New(env, "stack requires an array of arrays");
+  }
+
+  std::vector<mlx::core::array> arrays;
+  Napi::Array arr = info[0].As<Napi::Array>();
+  for (uint32_t i = 0; i < arr.Length(); i++) {
+    arrays.push_back(NapiToArray(arr.Get(i)));
+  }
+
+  int axis = 0;
+  if (info.Length() > 1 && !info[1].IsUndefined()) {
+    axis = info[1].As<Napi::Number>().Int32Value();
+  }
+  mlx::core::StreamOrDevice stream = {};
+  if (info.Length() > 2 && !info[2].IsUndefined()) {
+    stream = NapiToStreamOrDevice(info[2]);
+  }
+
+  mlx::core::array result = mlx::core::stack(arrays, axis, stream);
+  return ArrayToNapi(env, result);
+}`,
+      // Split
+      'split': `Napi::Value Wrap_split(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (info.Length() < 2) {
+    throw Napi::TypeError::New(env, "split requires array and indices_or_sections arguments");
+  }
+  mlx::core::array a = NapiToArray(info[0]);
+  int axis = 0;
+  mlx::core::StreamOrDevice stream = {};
+
+  std::vector<mlx::core::array> result;
+
+  if (info[1].IsNumber()) {
+    int num_sections = info[1].As<Napi::Number>().Int32Value();
+    if (info.Length() > 2 && !info[2].IsUndefined()) {
+      axis = info[2].As<Napi::Number>().Int32Value();
+    }
+    if (info.Length() > 3 && !info[3].IsUndefined()) {
+      stream = NapiToStreamOrDevice(info[3]);
+    }
+    result = mlx::core::split(a, num_sections, axis, stream);
+  } else if (info[1].IsArray()) {
+    mlx::core::Shape indices;
+    Napi::Array arr = info[1].As<Napi::Array>();
+    for (uint32_t i = 0; i < arr.Length(); i++) {
+      indices.push_back(arr.Get(i).As<Napi::Number>().Int32Value());
+    }
+    if (info.Length() > 2 && !info[2].IsUndefined()) {
+      axis = info[2].As<Napi::Number>().Int32Value();
+    }
+    if (info.Length() > 3 && !info[3].IsUndefined()) {
+      stream = NapiToStreamOrDevice(info[3]);
+    }
+    result = mlx::core::split(a, indices, axis, stream);
+  } else {
+    throw Napi::TypeError::New(env, "indices_or_sections must be a number or array");
+  }
+
+  Napi::Array napiResult = Napi::Array::New(env, result.size());
+  for (size_t i = 0; i < result.size(); i++) {
+    napiResult.Set(i, ArrayToNapi(env, result[i]));
+  }
+  return napiResult;
+}`,
+      // Arange
+      'arange': `Napi::Value Wrap_arange(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (info.Length() < 1) {
+    throw Napi::TypeError::New(env, "arange requires at least one argument");
+  }
+
+  double start = 0, stop, step = 1;
+  mlx::core::Dtype dtype = mlx::core::float32;
+  mlx::core::StreamOrDevice stream = {};
+
+  if (info.Length() == 1) {
+    // arange(stop)
+    stop = info[0].As<Napi::Number>().DoubleValue();
+  } else if (info.Length() >= 2) {
+    // arange(start, stop, ...)
+    start = info[0].As<Napi::Number>().DoubleValue();
+    stop = info[1].As<Napi::Number>().DoubleValue();
+    if (info.Length() > 2 && info[2].IsNumber()) {
+      step = info[2].As<Napi::Number>().DoubleValue();
+    }
+    // dtype and stream handling can be added as needed
+  }
+
+  mlx::core::array result = mlx::core::arange(start, stop, step, dtype, stream);
+  return ArrayToNapi(env, result);
+}`,
+      // Linspace
+      'linspace': `Napi::Value Wrap_linspace(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (info.Length() < 3) {
+    throw Napi::TypeError::New(env, "linspace requires start, stop, and num arguments");
+  }
+
+  double start = info[0].As<Napi::Number>().DoubleValue();
+  double stop = info[1].As<Napi::Number>().DoubleValue();
+  int num = info[2].As<Napi::Number>().Int32Value();
+  mlx::core::Dtype dtype = mlx::core::float32;
+  mlx::core::StreamOrDevice stream = {};
+
+  if (info.Length() > 3 && !info[3].IsUndefined()) {
+    dtype = NapiToDtype(info[3]);
+  }
+  if (info.Length() > 4 && !info[4].IsUndefined()) {
+    stream = NapiToStreamOrDevice(info[4]);
+  }
+
+  mlx::core::array result = mlx::core::linspace(start, stop, num, dtype, stream);
+  return ArrayToNapi(env, result);
+}`,
+    };
+
+    return implementations[name] || null;
   }
 
   private generateClassWrapper(cls: ClassBinding): string {
@@ -640,7 +1502,7 @@ Napi::Value MLXArray::Reshape(const Napi::CallbackInfo& info) {
     throw Napi::TypeError::New(env, "reshape requires a shape array");
   }
 
-  std::vector<int> shape;
+  mlx::core::Shape shape;
   Napi::Array shapeArr = info[0].As<Napi::Array>();
   for (uint32_t i = 0; i < shapeArr.Length(); i++) {
     shape.push_back(shapeArr.Get(i).As<Napi::Number>().Int32Value());
@@ -714,14 +1576,19 @@ Napi::Object MLXArray::Init(Napi::Env env, Napi::Object exports) {
     }
     lines.push('');
 
-    // Add functions (only those with signatures for now)
+    // Add functions (only those with signatures or manual implementations)
     lines.push('  // Functions');
     const seenFunctions = new Set<string>();
     for (const fn of functions) {
       if (seenFunctions.has(fn.name)) continue;
       seenFunctions.add(fn.name);
 
-      if (fn.signature) {
+      // Skip distributed functions - they need special Group handling
+      if (DISTRIBUTED_FUNCTIONS.has(fn.name)) continue;
+
+      // Export if has signature OR has manual implementation
+      const hasManualImpl = this.getManualImplementation(fn.name) !== null;
+      if (fn.signature || hasManualImpl) {
         lines.push(`  exports.Set("${fn.name}", Napi::Function::New(env, Wrap_${fn.name}));`);
       }
     }
