@@ -46,6 +46,7 @@ export interface EnumBinding {
   name: string;
   cppEnum: string;
   docstring?: string;
+  methods: MethodBinding[];  // Enums can have methods like __eq__
 }
 
 export interface ModuleAttribute {
@@ -54,7 +55,14 @@ export interface ModuleAttribute {
   value: string;
 }
 
-export type Binding = FunctionBinding | ClassBinding | EnumBinding | ModuleAttribute;
+export interface SubmoduleBinding {
+  type: 'submodule';
+  name: string;
+  fullName: string;
+  functions: FunctionBinding[];
+}
+
+export type Binding = FunctionBinding | ClassBinding | EnumBinding | ModuleAttribute | SubmoduleBinding;
 
 export class NanobindRegexParser {
   /**
@@ -74,6 +82,9 @@ export class NanobindRegexParser {
 
     // Parse module attributes: m.attr("name") = ...
     bindings.push(...this.parseAttributes(code));
+
+    // Parse submodules: m.def_submodule("name", ...) with their functions
+    bindings.push(...this.parseSubmodules(code));
 
     return bindings;
   }
@@ -382,8 +393,8 @@ export class NanobindRegexParser {
   }
 
   private parseClassConstructors(classChain: string, binding: ClassBinding): void {
-    // Match .def(nb::init<...>())
-    const initPattern = /\.def\s*\(\s*nb::init<([^>]*)>/g;
+    // Match .def(nb::init<...>()) and .def(nb::init_implicit<...>())
+    const initPattern = /\.def\s*\(\s*nb::init(?:_implicit)?<([^>]*)>/g;
     let match;
 
     while ((match = initPattern.exec(classChain)) !== null) {
@@ -412,25 +423,105 @@ export class NanobindRegexParser {
 
     while ((match = enumPattern.exec(code)) !== null) {
       const startPos = match.index;
-      const fullDef = this.extractBalancedParens(code, code.indexOf('(', startPos));
+
+      // Extract the full enum chain including .value() and .def() calls
+      const enumChain = this.extractEnumChain(code, startPos);
 
       const binding: EnumBinding = {
         type: 'enum',
         name: match[2],
         cppEnum: match[1],
+        methods: [],
       };
 
-      if (fullDef) {
-        const docMatch = fullDef.match(/R"pbdoc\(([\s\S]*?)\)pbdoc"/);
+      if (enumChain) {
+        const docMatch = enumChain.match(/R"pbdoc\(([\s\S]*?)\)pbdoc"/);
         if (docMatch) {
           binding.docstring = docMatch[1].trim();
         }
+
+        // Parse any methods defined on the enum (like __eq__)
+        this.parseEnumMethods(enumChain, binding);
       }
 
       enums.push(binding);
     }
 
     return enums;
+  }
+
+  private extractEnumChain(code: string, startPos: number): string | null {
+    // Similar to extractClassChain but for enums
+    const parenStart = code.indexOf('(', startPos);
+    if (parenStart === -1) return null;
+
+    let pos = parenStart;
+    let result = code.slice(startPos, parenStart);
+
+    // Keep consuming .xxx(...) chains (.value, .def, .export_values, etc.)
+    while (pos < code.length) {
+      const parenContent = this.extractBalancedParens(code, pos);
+      if (!parenContent) break;
+
+      result += parenContent;
+      pos += parenContent.length;
+
+      // Skip whitespace
+      while (pos < code.length && /\s/.test(code[pos])) pos++;
+
+      // Check for continuation with .
+      if (code[pos] === '.') {
+        // Find the method name
+        const methodMatch = code.slice(pos).match(/^\.(\w+)\s*\(/);
+        if (methodMatch) {
+          result += code.slice(pos, pos + methodMatch[0].length - 1);
+          pos += methodMatch[0].length - 1;
+        } else {
+          // Handle .export_values() with no args or similar
+          const noArgMatch = code.slice(pos).match(/^\.(\w+)\s*\(\s*\)/);
+          if (noArgMatch) {
+            result += noArgMatch[0];
+            pos += noArgMatch[0].length;
+          } else {
+            break;
+          }
+        }
+      } else {
+        break;
+      }
+    }
+
+    return result;
+  }
+
+  private parseEnumMethods(enumChain: string, binding: EnumBinding): void {
+    // Match .def("name", ...) on enums (like __eq__)
+    const methodPattern = /\.def\s*\(\s*"([^"]+)"/g;
+    let match;
+
+    while ((match = methodPattern.exec(enumChain)) !== null) {
+      // Skip patterns like .def_ro, .def_static (shouldn't appear on enums but be safe)
+      if (enumChain.slice(match.index, match.index + 5).match(/\.def_/)) continue;
+
+      const methodStart = match.index;
+      const methodDef = this.extractBalancedParens(enumChain, enumChain.indexOf('(', methodStart));
+
+      const method: MethodBinding = {
+        name: match[1],
+        isStatic: false,
+        isConstructor: false,
+      };
+
+      if (methodDef) {
+        // Extract docstring
+        const docMatch = methodDef.match(/R"pbdoc\(([\s\S]*?)\)pbdoc"/);
+        if (docMatch) {
+          method.docstring = docMatch[1].trim();
+        }
+      }
+
+      binding.methods.push(method);
+    }
   }
 
   private parseAttributes(code: string): ModuleAttribute[] {
@@ -449,6 +540,75 @@ export class NanobindRegexParser {
     }
 
     return attrs;
+  }
+
+  private parseSubmodules(code: string): SubmoduleBinding[] {
+    const submodules: SubmoduleBinding[] = [];
+
+    // Match patterns like:
+    // nb::module_ varname = m.def_submodule("name", "full.name");
+    // auto varname = parent.def_submodule("name", "full.name");
+    const submodulePattern = /(?:nb::module_|auto)\s+(\w+)\s*=\s*\w+\.def_submodule\s*\(\s*"([^"]+)"\s*,\s*"([^"]+)"/g;
+    let match;
+
+    while ((match = submodulePattern.exec(code)) !== null) {
+      const varName = match[1];
+      const name = match[2];
+      const fullName = match[3];
+
+      const binding: SubmoduleBinding = {
+        type: 'submodule',
+        name,
+        fullName,
+        functions: [],
+      };
+
+      // Find all varname.def("funcname", ...) patterns for this submodule
+      const funcPattern = new RegExp(`${varName}\\.def\\s*\\(\\s*"([^"]+)"`, 'g');
+      let funcMatch;
+
+      while ((funcMatch = funcPattern.exec(code)) !== null) {
+        const funcName = funcMatch[1];
+        const funcStart = funcMatch.index;
+
+        // Extract the full definition
+        const parenStart = code.indexOf('(', funcStart + varName.length);
+        const fullDef = this.extractBalancedParens(code, parenStart);
+
+        const funcBinding: FunctionBinding = {
+          type: 'function',
+          name: funcName,
+          isLambda: fullDef ? (fullDef.includes('[](') || fullDef.includes('[]<')) : false,
+          rawDefinition: fullDef || '',
+        };
+
+        if (fullDef) {
+          // Extract signature
+          const sigMatch = fullDef.match(/nb::sig\s*\(\s*"([^"]+)"\s*\)/);
+          if (sigMatch) {
+            funcBinding.signature = sigMatch[1];
+          }
+
+          // Extract C++ function reference
+          const fnRefMatch = fullDef.match(/&(mx::\w+(?:::\w+)*)/);
+          if (fnRefMatch && !funcBinding.isLambda) {
+            funcBinding.cppFunction = fnRefMatch[1];
+          }
+
+          // Extract docstring
+          const docMatch = fullDef.match(/R"pbdoc\(([\s\S]*?)\)pbdoc"/);
+          if (docMatch) {
+            funcBinding.docstring = docMatch[1].trim();
+          }
+        }
+
+        binding.functions.push(funcBinding);
+      }
+
+      submodules.push(binding);
+    }
+
+    return submodules;
   }
 
   /**

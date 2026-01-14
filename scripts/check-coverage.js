@@ -26,8 +26,11 @@ const BINDING_PATTERNS = [
   { name: 'm.attr(', category: 'attribute', critical: true },
 
   // Class methods (chained after nb::class_)
-  // Note: This counts ALL .def( including m.def( which is subtracted later
+  // Note: This counts ALL .def( - we'll subtract non-method patterns later
   { name: '.def(', category: 'method_raw', critical: false },
+
+  // Submodules
+  { name: '.def_submodule(', category: 'submodule', critical: false },
   { name: '.def_ro(', category: 'field_ro', critical: false },
   { name: '.def_rw(', category: 'field_rw', critical: false },
   { name: '.def_prop_ro(', category: 'property_ro', critical: false },
@@ -36,6 +39,7 @@ const BINDING_PATTERNS = [
 
   // Constructors
   { name: 'nb::init<', category: 'class_init', critical: false },
+  { name: 'nb::init_implicit<', category: 'class_init', critical: false },
 
   // Operators
   { name: 'nb::self', category: 'operator', critical: false },
@@ -125,9 +129,34 @@ async function main() {
     allSuspicious.push(...suspicious);
   }
 
-  // Calculate actual method count (subtract m.def from all .def)
-  // .def( matches both m.def( and class .def(, so we need to subtract
-  totalCounts['method'] = (totalCounts['method_raw'] || 0) - (totalCounts['function'] || 0);
+  // Count submodule functions specifically
+  // Pattern: known_submodule_var.def( where var is metal, cuda, etc.
+  let sourceSubmoduleFnCount = 0;
+  const knownSubmoduleVars = ['metal', 'cuda']; // These use non-'m' variable names
+  for (const file of files) {
+    const code = readFileSync(join(MLX_SOURCE, file), 'utf-8');
+    for (const varName of knownSubmoduleVars) {
+      const pattern = new RegExp(`${varName}\\.def\\s*\\(`, 'g');
+      const matches = code.match(pattern);
+      if (matches) {
+        sourceSubmoduleFnCount += matches.length;
+      }
+    }
+  }
+  totalCounts['submodule_fn'] = sourceSubmoduleFnCount;
+
+  // method_raw counts ALL .def( which includes:
+  // - m.def() functions (274)
+  // - submodule functions using named vars (13 from metal+cuda)
+  // - .def(nb::init<) constructors (5)
+  // - Class/enum methods with quoted names (137)
+  // Total = 274 + 13 + 5 + 137 = 429 (1 less than 430 due to edge case)
+  const methodRaw = totalCounts['method_raw'] || 0;
+  const functions = totalCounts['function'] || 0;
+  const submoduleFns = sourceSubmoduleFnCount;
+  const constructors = totalCounts['class_init'] || 0;
+  // Actual class/enum methods = total - functions - submodule fns - constructors
+  totalCounts['method'] = methodRaw - functions - submoduleFns - constructors;
 
   // Combine field and property counts for simpler comparison
   // Our parser captures both .def_ro and .def_prop_ro as properties
@@ -145,13 +174,26 @@ async function main() {
 
   // Count what we parsed
   const classes = parsed.bindings.filter(b => b.type === 'class');
+  const submodules = parsed.bindings.filter(b => b.type === 'submodule');
+
+  // Only count submodule functions from submodules that DON'T use 'm' as variable
+  // (those using 'm' are already counted in the 274 functions via m.def())
+  // mlx.metal and mlx.cuda use named variables, others use 'm'
+  const nonMSubmodules = submodules.filter(s =>
+    s.fullName === 'mlx.metal' || s.fullName === 'mlx.cuda'
+  );
+  const nonMSubmoduleFunctions = nonMSubmodules.reduce((sum, s) => sum + (s.functions?.length || 0), 0);
+
   const parsedCounts = {
     function: parsed.bindings.filter(b => b.type === 'function').length,
     class: classes.length,
     enum: parsed.bindings.filter(b => b.type === 'enum').length,
     attribute: parsed.bindings.filter(b => b.type === 'attribute').length,
-    // Count methods and properties from parsed classes
-    method: classes.reduce((sum, c) => sum + (c.methods?.length || 0), 0),
+    submodule: submodules.length,
+    submodule_fn: nonMSubmoduleFunctions, // Only metal + cuda functions
+    // Count methods and properties from parsed classes AND enums
+    method: classes.reduce((sum, c) => sum + (c.methods?.length || 0), 0)
+          + parsed.bindings.filter(b => b.type === 'enum').reduce((sum, e) => sum + (e.methods?.length || 0), 0),
     property_ro: classes.reduce((sum, c) => sum + (c.properties?.filter(p => p.readonly).length || 0), 0),
     property_rw: classes.reduce((sum, c) => sum + (c.properties?.filter(p => !p.readonly).length || 0), 0),
     class_init: classes.reduce((sum, c) => sum + (c.constructors?.length || 0), 0),
@@ -174,6 +216,8 @@ async function main() {
   // Add combined property categories and remove individual ones
   categories = categories.filter(c => !['field_ro', 'field_rw', 'property_ro', 'property_rw'].includes(c));
   categories.splice(categories.indexOf('method') + 1, 0, 'all_props_ro', 'all_props_rw');
+  // Add submodule function count after submodule
+  categories.splice(categories.indexOf('submodule') + 1, 0, 'submodule_fn');
   let hasProblems = false;
 
   for (const cat of categories) {
