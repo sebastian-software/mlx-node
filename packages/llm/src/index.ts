@@ -45,5 +45,5 @@ export * from './cache/index.js';
 // Generation
 export * from './generation/index.js';
 
-// Models will be exported here once implemented
-// export * from './models/index.js';
+// Models
+export * from './models/index.js';
