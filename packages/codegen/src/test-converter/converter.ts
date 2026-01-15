@@ -423,17 +423,64 @@ export function convertAssertion(assertType: string, args: string[]): string {
  * Check if a line should be skipped (complex Python features)
  */
 function shouldSkipLine(line: string): { skip: boolean; reason?: string } {
-  // Complex numbers
-  if (/\d+\.?\d*[+-]?\d*\.?\d*j\b/.test(line)) {
-    return { skip: true, reason: 'complex' };
-  }
-
   // Note: kwargs are now handled by convertKwargs()
   // Note: slices are now handled by convertSlices()
   // Note: slice assignments are now handled by convertSliceAssignments()
   // Note: .at[] indexing is now handled by convertAtIndex()
+  // Note: complex numbers are now handled by convertComplex()
 
   return { skip: false };
+}
+
+/**
+ * Convert Python complex number literals to makeComplex() calls
+ * Examples:
+ *   1j -> makeComplex(mx, 0, 1)
+ *   2+3j -> makeComplex(mx, 2, 3)
+ *   1.5-2.5j -> makeComplex(mx, 1.5, -2.5)
+ *   r + 1j * i -> makeComplex(mx, r, i)
+ */
+function convertComplex(code: string): string {
+  let result = code;
+
+  // Pattern 1: Complex expression like "r + 1j * i" or "r + i * 1j"
+  // Convert: x + 1j * y -> makeComplex(mx, x, y)
+  // Convert: x - 1j * y -> makeComplex(mx, x, mx.negative(y))
+  result = result.replace(
+    /(\b[a-zA-Z_][a-zA-Z0-9_]*)\s*\+\s*1j\s*\*\s*(\b[a-zA-Z_][a-zA-Z0-9_]*)/g,
+    'makeComplex(mx, $1, $2)'
+  );
+  result = result.replace(
+    /(\b[a-zA-Z_][a-zA-Z0-9_]*)\s*-\s*1j\s*\*\s*(\b[a-zA-Z_][a-zA-Z0-9_]*)/g,
+    'makeComplex(mx, $1, mx.negative($2))'
+  );
+
+  // Pattern 2: Standalone complex literal "a+bj" or "a-bj" (with numbers)
+  // Match: optional_real +/- imaginary j
+  // Examples: 1+2j, 1.5-2.5j, -1+2j, 1-2j
+  result = result.replace(
+    /\b(-?\d+\.?\d*)\s*\+\s*(\d+\.?\d*)j\b/g,
+    'makeComplex(mx, $1, $2)'
+  );
+  result = result.replace(
+    /\b(-?\d+\.?\d*)\s*-\s*(\d+\.?\d*)j\b/g,
+    'makeComplex(mx, $1, -$2)'
+  );
+
+  // Pattern 3: Pure imaginary "bj" or "0j"
+  // Examples: 1j, 2.5j, 0j
+  result = result.replace(
+    /\b(\d+\.?\d*)j\b/g,
+    'makeComplex(mx, 0, $1)'
+  );
+
+  // Pattern 4: Complex with explicit 0 imaginary like "1 + 0j"
+  result = result.replace(
+    /\b(-?\d+\.?\d*)\s*\+\s*0j\b/g,
+    'makeComplex(mx, $1, 0)'
+  );
+
+  return result;
 }
 
 /**
@@ -540,6 +587,7 @@ export function convertLine(line: string, declaredVars: Set<string>): string {
   // Apply conversions
   ts = convertKwargs(ts);
   ts = convertAtIndex(ts);
+  ts = convertComplex(ts);
   ts = convertSlices(ts);
   ts = pythonToTypeScript(ts);
 
@@ -718,6 +766,7 @@ export function convertTestFile(
   const needsSliceRead = /\w+\[.*:.*\]/.test(source);
   const needsSliceUpdate = /\w+\[.*:.*\]\s*=/.test(source);
   const needsAtIndex = /\.at\[/.test(source);
+  const needsComplex = /\d+\.?\d*j\b|1j\s*\*/.test(source);
 
   const lines: string[] = [
     "import { describe, it, expect } from 'vitest';",
@@ -737,6 +786,9 @@ export function convertTestFile(
   }
   if (needsAtIndex) {
     utilImports.push('pyAt');
+  }
+  if (needsComplex) {
+    utilImports.push('makeComplex');
   }
   if (utilImports.length > 0) {
     lines.push(`import { ${utilImports.join(', ')} } from '../utils';`);

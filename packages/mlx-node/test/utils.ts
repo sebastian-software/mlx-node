@@ -459,6 +459,72 @@ export function pyAt(mx: any, a: any, indexExpr: string): AtIndexer {
 /**
  * Fluent interface for .at[] operations
  */
+/**
+ * Create a complex array from real and imaginary components.
+ *
+ * JavaScript doesn't have native complex numbers, so this utility creates
+ * MLX complex64 arrays by interleaving float32 values and using view().
+ *
+ * @param mx - The MLX module
+ * @param real - Real component (scalar or array)
+ * @param imag - Imaginary component (scalar or array)
+ * @returns A complex64 array
+ *
+ * @example
+ * // Create 1+2j
+ * makeComplex(mx, 1, 2)
+ *
+ * // Create [1+2j, 3+4j]
+ * makeComplex(mx, [1, 3], [2, 4])
+ *
+ * // Create complex from r + 1j*i
+ * makeComplex(mx, r, i)
+ */
+export function makeComplex(mx: any, real: any, imag: any): any {
+  // Convert to float32 arrays
+  const r = ensureFloat32(mx, real);
+  const i = ensureFloat32(mx, imag);
+
+  // Get the shape
+  const shape: number[] = r.shape;
+
+  // Handle scalar case
+  if (shape.length === 0 || (shape.length === 1 && shape[0] === 1)) {
+    // For scalars, create [real, imag] and view as complex
+    const pair = mx.stack([r, i], { axis: 0 });
+    return mx.view(pair, 'complex64');
+  }
+
+  // Flatten both arrays
+  const rFlat = mx.flatten(r);
+  const iFlat = mx.flatten(i);
+
+  // Stack to create [..., 2] shape then flatten to interleave
+  // [r0, r1, ...] + [i0, i1, ...] -> [[r0, i0], [r1, i1], ...] -> [r0, i0, r1, i1, ...]
+  const stacked = mx.stack([rFlat, iFlat], { axis: 1 });
+  const interleaved = mx.flatten(stacked);
+
+  // View as complex64
+  const complexFlat = mx.view(interleaved, 'complex64');
+
+  // Reshape back to original shape
+  return mx.reshape(complexFlat, shape);
+}
+
+/**
+ * Helper to ensure value is a float32 array
+ */
+function ensureFloat32(mx: any, value: any): any {
+  if (typeof value === 'number') {
+    return mx.array(value, { dtype: 'float32' });
+  }
+  if (Array.isArray(value)) {
+    return mx.array(value, { dtype: 'float32' });
+  }
+  // Assume it's already an array, cast to float32
+  return mx.astype(value, 'float32');
+}
+
 class AtIndexer {
   constructor(
     private mx: any,
