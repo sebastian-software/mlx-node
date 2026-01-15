@@ -428,16 +428,29 @@ function shouldSkipLine(line: string): { skip: boolean; reason?: string } {
     return { skip: true, reason: 'complex' };
   }
 
-  // .at[] indexing (JAX-style) - not yet supported (needs scatter operations)
-  if (/\.at\[/.test(line)) {
-    return { skip: true, reason: 'at-index' };
-  }
-
   // Note: kwargs are now handled by convertKwargs()
   // Note: slices are now handled by convertSlices()
   // Note: slice assignments are now handled by convertSliceAssignments()
+  // Note: .at[] indexing is now handled by convertAtIndex()
 
   return { skip: false };
+}
+
+/**
+ * Convert Python .at[] indexing to pyAt() calls
+ * Examples:
+ *   a.at[1].add(2) -> pyAt(mx, a, '1').add(2)
+ *   a.at[0:1].add(x) -> pyAt(mx, a, '0:1').add(x)
+ *   a.at[idx_x, :, 0].add(u) -> pyAt(mx, a, 'idx_x, :, 0').add(u)
+ */
+function convertAtIndex(code: string): string {
+  // Match: identifier.at[indexExpr].method(args)
+  // The indexExpr can contain commas, colons, variable names, etc.
+  const atPattern = /\b([a-zA-Z_][a-zA-Z0-9_]*)\.at\[([^\]]+)\]\.(add|subtract|multiply|divide|maximum|minimum)\(([^)]+)\)/g;
+
+  return code.replace(atPattern, (match, identifier, indexExpr, method, args) => {
+    return `pyAt(mx, ${identifier}, '${indexExpr}').${method}(${args})`;
+  });
 }
 
 /**
@@ -526,6 +539,7 @@ export function convertLine(line: string, declaredVars: Set<string>): string {
 
   // Apply conversions
   ts = convertKwargs(ts);
+  ts = convertAtIndex(ts);
   ts = convertSlices(ts);
   ts = pythonToTypeScript(ts);
 
@@ -703,6 +717,7 @@ export function convertTestFile(
   const needsAllClose = source.includes('np.allclose') || source.includes('assert_allclose');
   const needsSliceRead = /\w+\[.*:.*\]/.test(source);
   const needsSliceUpdate = /\w+\[.*:.*\]\s*=/.test(source);
+  const needsAtIndex = /\.at\[/.test(source);
 
   const lines: string[] = [
     "import { describe, it, expect } from 'vitest';",
@@ -719,6 +734,9 @@ export function convertTestFile(
   }
   if (needsSliceUpdate) {
     utilImports.push('pySliceUpdate');
+  }
+  if (needsAtIndex) {
+    utilImports.push('pyAt');
   }
   if (utilImports.length > 0) {
     lines.push(`import { ${utilImports.join(', ')} } from '../utils';`);

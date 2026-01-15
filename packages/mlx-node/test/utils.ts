@@ -433,3 +433,168 @@ export function pySliceUpdate(mx: any, a: any, sliceExpr: string, value: any): a
 
   return mx.slice_update(a, broadcastedUpdate, mx.array(startIndices), axes);
 }
+
+/**
+ * Python-style .at[] indexer for functional array updates.
+ *
+ * Provides JAX-style functional updates: a.at[idx].add(value) returns a new
+ * array with the value added at the specified index.
+ *
+ * @param mx - The MLX module
+ * @param a - The array to update
+ * @param indexExpr - Python-style index expression (e.g., "1", "0:1", ":, 0")
+ * @returns An AtIndexer with add, subtract, multiply, divide, maximum, minimum methods
+ *
+ * @example
+ * // Python: a = a.at[1].add(2)
+ * a = pyAt(mx, a, '1').add(2)
+ *
+ * // Python: a = a.at[0:1].add(update)
+ * a = pyAt(mx, a, '0:1').add(update)
+ */
+export function pyAt(mx: any, a: any, indexExpr: string): AtIndexer {
+  return new AtIndexer(mx, a, indexExpr);
+}
+
+/**
+ * Fluent interface for .at[] operations
+ */
+class AtIndexer {
+  constructor(
+    private mx: any,
+    private a: any,
+    private indexExpr: string
+  ) {}
+
+  /**
+   * Add value at the specified index
+   */
+  add(value: any): any {
+    return this.applyOp(value, (current, val) => this.mx.add(current, val));
+  }
+
+  /**
+   * Subtract value at the specified index
+   */
+  subtract(value: any): any {
+    return this.applyOp(value, (current, val) => this.mx.subtract(current, val));
+  }
+
+  /**
+   * Multiply value at the specified index
+   */
+  multiply(value: any): any {
+    return this.applyOp(value, (current, val) => this.mx.multiply(current, val));
+  }
+
+  /**
+   * Divide value at the specified index
+   */
+  divide(value: any): any {
+    return this.applyOp(value, (current, val) => this.mx.divide(current, val));
+  }
+
+  /**
+   * Take element-wise maximum at the specified index
+   */
+  maximum(value: any): any {
+    return this.applyOp(value, (current, val) => this.mx.maximum(current, val));
+  }
+
+  /**
+   * Take element-wise minimum at the specified index
+   */
+  minimum(value: any): any {
+    return this.applyOp(value, (current, val) => this.mx.minimum(current, val));
+  }
+
+  /**
+   * Apply an operation at the index
+   */
+  private applyOp(value: any, op: (current: any, value: any) => any): any {
+    const indexExpr = this.indexExpr.trim();
+
+    // Handle None/null (newaxis) - just apply op to entire array
+    if (indexExpr === 'None' || indexExpr === 'null') {
+      return op(this.a, value);
+    }
+
+    // Check if this is a simple integer index
+    if (/^-?\d+$/.test(indexExpr)) {
+      return this.applyAtIndex(parseInt(indexExpr, 10), value, op);
+    }
+
+    // Check if this contains a slice (colon)
+    if (indexExpr.includes(':')) {
+      return this.applyAtSlice(indexExpr, value, op);
+    }
+
+    // For array indices or complex expressions, try to handle common cases
+    // This is a simplified implementation - complex cases may not work
+    return this.applyAtExpression(indexExpr, value, op);
+  }
+
+  /**
+   * Apply operation at a single integer index
+   */
+  private applyAtIndex(idx: number, value: any, op: (current: any, value: any) => any): any {
+    const shape = this.a.shape;
+    const dim = shape[0];
+    const actualIdx = idx < 0 ? dim + idx : idx;
+
+    // Get current value at index
+    const current = this.mx.take(this.a, this.mx.array([actualIdx]), 0);
+
+    // Apply operation
+    const updated = op(current, value);
+
+    // Put back using slice_update
+    const startIndices = this.mx.array([actualIdx]);
+    const axes = [0];
+
+    // Ensure updated has correct shape for slice_update
+    let updateShaped = updated;
+    if (updated.shape.length === shape.length - 1) {
+      updateShaped = this.mx.expand_dims(updated, 0);
+    }
+
+    return this.mx.slice_update(this.a, updateShaped, startIndices, axes);
+  }
+
+  /**
+   * Apply operation at a slice
+   */
+  private applyAtSlice(sliceExpr: string, value: any, op: (current: any, value: any) => any): any {
+    // Get current values at slice
+    const current = pySlice(this.mx, this.a, sliceExpr);
+
+    // Apply operation
+    const updated = op(current, value);
+
+    // Put back using pySliceUpdate
+    return pySliceUpdate(this.mx, this.a, sliceExpr, updated);
+  }
+
+  /**
+   * Apply operation at a complex expression (array indices, multi-dimensional)
+   * This is a best-effort implementation for common patterns
+   */
+  private applyAtExpression(expr: string, value: any, op: (current: any, value: any) => any): any {
+    // For expressions like "idx_x, :, 0" - mixed array and slice indexing
+    // This requires scatter operations which aren't available
+    // Fall back to a loop-based approach for simple array indices
+
+    // Try to detect if this is a simple variable name (array index)
+    if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(expr)) {
+      // Single array variable as index - would need scatter
+      // For now, throw an informative error
+      throw new Error(`Array indexing in .at[] requires scatter operations: ${expr}`);
+    }
+
+    // For comma-separated expressions, try slice-based approach
+    // This won't work correctly for all cases but handles some
+    const current = pySlice(this.mx, this.a, expr);
+    const updated = op(current, value);
+    return pySliceUpdate(this.mx, this.a, expr, updated);
+  }
+}
