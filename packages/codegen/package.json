@@ -7,7 +7,9 @@
   "types": "dist/index.d.ts",
   "bin": {
     "mlx-generate": "./dist/generate-from-cpp.js",
-    "mlx-check-bindings": "./dist/check-bindings.js"
+    "mlx-check-bindings": "./dist/check-bindings.js",
+    "mlx-check-version": "./dist/check-mlx-version.js",
+    "mlx-convert-tests": "./dist/test-converter/index.js"
   },
   "exports": {
     ".": {
@@ -16,10 +18,12 @@
     }
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && chmod +x dist/test-converter/index.js",
     "clean": "rm -rf dist",
     "generate": "node dist/generate-from-cpp.js",
-    "check-bindings": "node dist/check-bindings.js"
+    "check-bindings": "node dist/check-bindings.js",
+    "check:mlx-version": "node dist/check-mlx-version.js",
+    "convert-tests": "node dist/test-converter/index.js"
   },
   "devDependencies": {
     "@types/node": "^22.0.0"
@@ -27,7 +31,13 @@
   "files": [
     "dist",
     "src",
-    "templates"
+    "templates",
+    "snippets"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "@lezer/common": "^1.5.0",
+    "@lezer/lr": "^1.4.7",
+    "@lezer/python": "^1.1.18"
+  }
 }
