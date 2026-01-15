@@ -573,6 +573,15 @@ function convertStatement(stmt: Statement, declaredVars: Set<string>, indent: st
           lines.push(...convertStatements(stmt.children, declaredVars, indent));
         }
       }
+      // Handle mx.stream - inline the body with a comment
+      else if (ctx.includes('mx.stream')) {
+        const streamMatch = ctx.match(/mx\.stream\(([^)]+)\)/);
+        const streamArg = streamMatch?.[1] || 'mx.cpu';
+        lines.push(`${indent}// Note: Originally in mx.stream(${streamArg}) context`);
+        if (stmt.children) {
+          lines.push(...convertStatements(stmt.children, declaredVars, indent));
+        }
+      }
       // Other with statements
       else {
         lines.push(`${indent}// TODO (with): ${stmt.text.split('\n')[0]}`);
