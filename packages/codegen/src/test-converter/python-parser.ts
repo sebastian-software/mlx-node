@@ -166,7 +166,30 @@ function parseStatement(node: SyntaxNode, source: string): Statement | null {
     }
 
     case 'ForStatement': {
-      const loopVars = node.getChild('VariableName') || node.getChild('PatternList');
+      // Collect all nodes between 'for' and 'in' to get the full loop variable pattern
+      // This handles: for x, for (a, b), and for (a, b), (c, d) patterns
+      let loopVarStart: number | null = null;
+      let loopVarEnd: number | null = null;
+      let foundFor = false;
+
+      for (let child = node.firstChild; child; child = child.nextSibling) {
+        if (child.type.name === 'for') {
+          foundFor = true;
+          continue;
+        }
+        if (child.type.name === 'in') {
+          break;
+        }
+        if (foundFor) {
+          if (loopVarStart === null) loopVarStart = child.from;
+          loopVarEnd = child.to;
+        }
+      }
+
+      const loopVar = (loopVarStart !== null && loopVarEnd !== null)
+        ? source.slice(loopVarStart, loopVarEnd).trim()
+        : undefined;
+
       const iterExpr = node.getChild('in')?.nextSibling;
       const bodyNode = node.getChild('Body');
 
@@ -174,7 +197,7 @@ function parseStatement(node: SyntaxNode, source: string): Statement | null {
         type: 'for',
         text,
         node,
-        loopVar: loopVars ? source.slice(loopVars.from, loopVars.to) : undefined,
+        loopVar,
         iterable: iterExpr ? source.slice(iterExpr.from, iterExpr.to).replace(/:$/, '').trim() : undefined,
         children: bodyNode ? parseStatements(bodyNode, source) : [],
       };

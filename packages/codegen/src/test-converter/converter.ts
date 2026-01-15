@@ -240,6 +240,10 @@ export function pythonToTypeScript(code: string): string {
   ts = ts.replace(/(?<![a-zA-Z0-9_])\((\d+),\)/g, '[$1]');
   ts = ts.replace(/(?<![a-zA-Z0-9_])\((\d+(?:,\s*\d+)+)\)/g, (_, nums) => `[${nums}]`);
 
+  // Tuple of arrays/tuples: ((...), (...)) or ([...], [...]) -> [[...], [...]]
+  // This handles for-loop iterables like: for x in ((1,2), (3,4))
+  ts = ts.replace(/\(\s*(\[[^\]]+\](?:\s*,\s*\[[^\]]+\])*)\s*,?\s*\)/g, '[$1]');
+
   // Empty tuple () -> empty array []
   ts = ts.replace(/\.toBe\(\(\)\)/g, '.toEqual([])');
   ts = ts.replace(/\.toEqual\(\(\)\)/g, '.toEqual([])');
@@ -484,6 +488,80 @@ function convertComplex(code: string): string {
 }
 
 /**
+ * Convert Python tuple pattern to JS array destructuring
+ * Examples:
+ *   x -> x
+ *   (a, b) -> [a, b]
+ *   a, b -> [a, b]
+ *   (a, b), (c, d) -> [[a, b], [c, d]]
+ */
+function convertTuplePattern(pattern: string): string {
+  pattern = pattern.trim();
+
+  // Simple variable name
+  if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(pattern)) {
+    return pattern;
+  }
+
+  // Check for nested tuples: (a, b), (c, d)
+  // Split by comma but respect parentheses
+  const parts: string[] = [];
+  let current = '';
+  let depth = 0;
+
+  for (const char of pattern) {
+    if (char === '(') {
+      depth++;
+      current += char;
+    } else if (char === ')') {
+      depth--;
+      current += char;
+    } else if (char === ',' && depth === 0) {
+      if (current.trim()) {
+        parts.push(current.trim());
+      }
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  if (current.trim()) {
+    parts.push(current.trim());
+  }
+
+  // If we have multiple parts at depth 0, each might be a tuple
+  if (parts.length > 1) {
+    // Check if parts are tuples (start and end with parens)
+    const allTuples = parts.every(p => p.startsWith('(') && p.endsWith(')'));
+    if (allTuples) {
+      // Nested tuple pattern: [[a, b], [c, d]]
+      const converted = parts.map(p => convertTuplePattern(p));
+      return `[${converted.join(', ')}]`;
+    }
+    // Simple comma-separated: [a, b, c]
+    return `[${parts.join(', ')}]`;
+  }
+
+  // Single tuple: (a, b) -> [a, b]
+  if (pattern.startsWith('(') && pattern.endsWith(')')) {
+    const inner = pattern.slice(1, -1);
+    const innerParts = inner.split(',').map(p => p.trim());
+    return `[${innerParts.join(', ')}]`;
+  }
+
+  return pattern;
+}
+
+/**
+ * Extract all variable names from a tuple pattern
+ */
+function extractVarNames(pattern: string): string[] {
+  // Remove all parentheses and split by comma
+  const cleaned = pattern.replace(/[()]/g, '');
+  return cleaned.split(',').map(v => v.trim()).filter(v => /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(v));
+}
+
+/**
  * Convert Python .at[] indexing to pyAt() calls
  * Examples:
  *   a.at[1].add(2) -> pyAt(mx, a, '1').add(2)
@@ -637,15 +715,12 @@ function convertStatement(stmt: Statement, declaredVars: Set<string>, indent: st
         const tsIterable = pythonToTypeScript(stmt.iterable);
         const loopVar = stmt.loopVar;
 
-        // Handle tuple unpacking: (a, b) or a, b
-        if (loopVar.includes(',') || (loopVar.startsWith('(') && loopVar.endsWith(')'))) {
-          const vars = loopVar.replace(/[()]/g, '').split(',').map(v => v.trim());
-          lines.push(`${indent}for (const [${vars.join(', ')}] of ${tsIterable}) {`);
-          vars.forEach(v => declaredVars.add(v));
-        } else {
-          lines.push(`${indent}for (const ${loopVar} of ${tsIterable}) {`);
-          declaredVars.add(loopVar);
-        }
+        // Convert Python tuple patterns to JS destructuring
+        const jsDestructure = convertTuplePattern(loopVar);
+        const allVars = extractVarNames(loopVar);
+
+        lines.push(`${indent}for (const ${jsDestructure} of ${tsIterable}) {`);
+        allVars.forEach(v => declaredVars.add(v));
 
         if (stmt.children) {
           lines.push(...convertStatements(stmt.children, declaredVars, indent + '  '));
