@@ -114,8 +114,9 @@ export class CppNapiGenerator {
   private functions: Map<string, CppFunction[]>;
   private exports: Map<string, ExportedFunction>;
   private templatesDir: string;
+  private snippetsDir: string;
   private format: boolean;
-  private templateCache: Map<string, string> = new Map();
+  private fileCache: Map<string, string> = new Map();
 
   constructor(
     functions: CppFunction[],
@@ -124,31 +125,40 @@ export class CppNapiGenerator {
   ) {
     this.functions = groupByName(functions);
     this.exports = exports;
+    const baseDir = path.join(__dirname, '..');
     this.templatesDir = options.templatePath
       ? path.dirname(options.templatePath)
-      : path.join(__dirname, '..', 'templates');
+      : path.join(baseDir, 'templates');
+    this.snippetsDir = path.join(baseDir, 'snippets');
     this.format = options.format ?? true;
   }
 
   // ===========================================================================
-  // Template Loading
+  // File Loading
   // ===========================================================================
 
-  private loadTemplate(name: string, vars: Record<string, string> = {}): string {
-    const cacheKey = name + JSON.stringify(vars);
-    if (this.templateCache.has(cacheKey)) {
-      return this.templateCache.get(cacheKey)!;
+  private loadFile(filePath: string, vars: Record<string, string> = {}): string {
+    const cacheKey = filePath + JSON.stringify(vars);
+    if (this.fileCache.has(cacheKey)) {
+      return this.fileCache.get(cacheKey)!;
     }
 
-    const templatePath = path.join(this.templatesDir, name);
-    let content = fs.readFileSync(templatePath, 'utf-8');
+    let content = fs.readFileSync(filePath, 'utf-8');
 
     for (const [key, value] of Object.entries(vars)) {
       content = content.replaceAll(`@@${key}@@`, value);
     }
 
-    this.templateCache.set(cacheKey, content);
+    this.fileCache.set(cacheKey, content);
     return content;
+  }
+
+  private loadTemplate(name: string): string {
+    return this.loadFile(path.join(this.templatesDir, name));
+  }
+
+  private loadSnippet(name: string, vars: Record<string, string> = {}): string {
+    return this.loadFile(path.join(this.snippetsDir, name), vars);
   }
 
   // ===========================================================================
@@ -268,9 +278,9 @@ export class CppNapiGenerator {
   }
 
   private generateDispatchBody(name: string, overloads: CppFunction[]): string {
-    // Special cases with templates
+    // Special cases with snippets
     if (name === 'arange') {
-      return this.loadTemplate('dispatch/arange.cpp');
+      return this.loadSnippet('arange.cpp');
     }
 
     // Check for reduction patterns
@@ -280,11 +290,11 @@ export class CppNapiGenerator {
     const hasDdof = overloads.some(o => o.params.some(p => p.name === 'ddof'));
 
     if (hasAxis && hasAxes && hasKeepdims && hasDdof) {
-      return this.loadTemplate('dispatch/variance.cpp', { NAME: name });
+      return this.loadSnippet('variance.cpp', { NAME: name });
     }
 
     if (hasAxis && hasAxes && hasKeepdims) {
-      return this.loadTemplate('dispatch/reduction.cpp', { NAME: name });
+      return this.loadSnippet('reduction.cpp', { NAME: name });
     }
 
     // Default: use first overload
