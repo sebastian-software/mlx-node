@@ -26,6 +26,7 @@ mx::Shape NapiToShape(const Napi::Value& value);
 std::vector<int> NapiToVecInt(const Napi::Value& value);
 std::vector<mx::array> NapiToVecArray(const Napi::Value& value);
 Napi::Value VecArrayToNapi(Napi::Env env, const std::vector<mx::array>& vec);
+mx::Strides NapiToStrides(const Napi::Value& value);
 mx::Dtype NapiToDtype(const Napi::Value& value);
 mx::StreamOrDevice NapiToStreamOrDevice(const Napi::Value& value);
 
@@ -419,6 +420,18 @@ Napi::Value VecArrayToNapi(Napi::Env env, const std::vector<mx::array>& vec) {
     arr.Set(i, ArrayToNapi(env, vec[i]));
   }
   return arr;
+}
+
+mx::Strides NapiToStrides(const Napi::Value& value) {
+  mx::Strides strides;
+  if (value.IsArray()) {
+    Napi::Array arr = value.As<Napi::Array>();
+    for (uint32_t i = 0; i < arr.Length(); i++) {
+      strides.push_back(
+          static_cast<size_t>(arr.Get(i).As<Napi::Number>().Int64Value()));
+    }
+  }
+  return strides;
 }
 
 mx::Dtype NapiToDtype(const Napi::Value& value) {

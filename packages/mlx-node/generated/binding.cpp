@@ -26,6 +26,7 @@ mx::Shape NapiToShape(const Napi::Value& value);
 std::vector<int> NapiToVecInt(const Napi::Value& value);
 std::vector<mx::array> NapiToVecArray(const Napi::Value& value);
 Napi::Value VecArrayToNapi(Napi::Env env, const std::vector<mx::array>& vec);
+mx::Strides NapiToStrides(const Napi::Value& value);
 mx::Dtype NapiToDtype(const Napi::Value& value);
 mx::StreamOrDevice NapiToStreamOrDevice(const Napi::Value& value);
 
@@ -419,6 +420,17 @@ Napi::Value VecArrayToNapi(Napi::Env env, const std::vector<mx::array>& vec) {
     arr.Set(i, ArrayToNapi(env, vec[i]));
   }
   return arr;
+}
+
+mx::Strides NapiToStrides(const Napi::Value& value) {
+  mx::Strides strides;
+  if (value.IsArray()) {
+    Napi::Array arr = value.As<Napi::Array>();
+    for (uint32_t i = 0; i < arr.Length(); i++) {
+      strides.push_back(static_cast<size_t>(arr.Get(i).As<Napi::Number>().Int64Value()));
+    }
+  }
+  return strides;
 }
 
 mx::Dtype NapiToDtype(const Napi::Value& value) {
@@ -1078,7 +1090,7 @@ Napi::Value Wrap_identity(const Napi::CallbackInfo& info) {
 Napi::Value Wrap_tri(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   int n = info[0].As<Napi::Number>().Int32Value();
-  mx::Dtype type = info.Length() > 1 && !info[1].IsUndefined() ? NapiToDtype(info[1]) : mx::float32;
+  mx::Dtype type = NapiToDtype(info[1]);
   mx::StreamOrDevice s = {};
   mx::array result = mx::tri(n, type, s);
   return ArrayToNapi(env, result);
@@ -1688,17 +1700,7 @@ Napi::Value Wrap_as_strided(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::Shape shape = NapiToShape(info[1]);
-  mx::Strides strides = info.Length() > 2 && !info[2].IsUndefined() ? [&]() {
-    mx::Strides s;
-    if (info[2].IsArray()) {
-      Napi::Array arr = info[2].As<Napi::Array>();
-      for (uint32_t i = 0; i < arr.Length(); i++) {
-        s.push_back(static_cast<size_t>(arr.Get(i).As<Napi::Number>().Int64Value()));
-      }
-    }
-    return s;
-  }()
-                                                                    : mx::Strides{};
+  mx::Strides strides = NapiToStrides(info[2]);
   size_t offset = static_cast<size_t>(info[3].As<Napi::Number>().Int64Value());
   mx::StreamOrDevice s = {};
   mx::array result = mx::as_strided(a, shape, strides, offset, s);
@@ -2373,8 +2375,7 @@ Napi::Value Wrap_bitwise_invert(const Napi::CallbackInfo& info) {
 Napi::Value Wrap_view(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
-  mx::Dtype dtype =
-      info.Length() > 1 && !info[1].IsUndefined() ? NapiToDtype(info[1]) : mx::float32;
+  mx::Dtype dtype = NapiToDtype(info[1]);
   mx::StreamOrDevice s = {};
   mx::array result = mx::view(a, dtype, s);
   return ArrayToNapi(env, result);
@@ -2739,18 +2740,14 @@ Napi::Value Wrap_ifftshift(const Napi::CallbackInfo& info) {
 
 Napi::Value Wrap_seed(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  uint64_t seed = info.Length() > 0 && !info[0].IsUndefined()
-                      ? static_cast<uint64_t>(info[0].As<Napi::Number>().Int64Value())
-                      : 0;
+  uint64_t seed = static_cast<uint64_t>(info[0].As<Napi::Number>().Int64Value());
   mx::random::seed(seed);
   return env.Undefined();
 }
 
 Napi::Value Wrap_key(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  uint64_t seed = info.Length() > 0 && !info[0].IsUndefined()
-                      ? static_cast<uint64_t>(info[0].As<Napi::Number>().Int64Value())
-                      : 0;
+  uint64_t seed = static_cast<uint64_t>(info[0].As<Napi::Number>().Int64Value());
   mx::array result = mx::random::key(seed);
   return ArrayToNapi(env, result);
 }
@@ -2782,8 +2779,7 @@ Napi::Value Wrap_multivariate_normal(const Napi::CallbackInfo& info) {
   mx::array mean = NapiToArray(info[0]);
   mx::array cov = NapiToArray(info[1]);
   mx::Shape shape = NapiToShape(info[2]);
-  mx::Dtype dtype =
-      info.Length() > 3 && !info[3].IsUndefined() ? NapiToDtype(info[3]) : mx::float32;
+  mx::Dtype dtype = NapiToDtype(info[3]);
   std::optional<mx::array> key = info.Length() > 4 && !info[4].IsUndefined() && !info[4].IsNull()
                                      ? std::optional<mx::array>(NapiToArray(info[4]))
                                      : std::nullopt;
