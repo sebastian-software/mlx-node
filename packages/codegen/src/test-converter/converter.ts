@@ -423,19 +423,47 @@ export function convertAssertion(assertType: string, args: string[]): string {
  * Check if a line should be skipped (complex Python features)
  */
 function shouldSkipLine(line: string): { skip: boolean; reason?: string } {
-  // Python slice expressions
-  if (/\[.*:.*\]/.test(line) && !line.startsWith('//')) {
-    return { skip: true, reason: 'slice' };
-  }
-
   // Complex numbers
   if (/\d+\.?\d*[+-]?\d*\.?\d*j\b/.test(line)) {
     return { skip: true, reason: 'complex' };
   }
 
+  // Slice assignments (a[1:3] = x) - not yet supported
+  if (/\w+\[.*:.*\]\s*=/.test(line) && !line.startsWith('//')) {
+    return { skip: true, reason: 'slice-assign' };
+  }
+
+  // .at[] indexing (JAX-style) - not yet supported
+  if (/\.at\[/.test(line)) {
+    return { skip: true, reason: 'at-index' };
+  }
+
   // Note: kwargs are now handled by convertKwargs()
+  // Note: slices are now handled by convertSlices()
 
   return { skip: false };
+}
+
+/**
+ * Convert Python slice expressions to pySlice() calls
+ * Examples:
+ *   a[1:3] -> pySlice(mx, a, '1:3')
+ *   a[:, 0] -> pySlice(mx, a, ':, 0')
+ *   a[::2] -> pySlice(mx, a, '::2')
+ */
+function convertSlices(code: string): string {
+  // Match identifier followed by [...] containing a colon
+  // But not if it's a slice assignment (handled by shouldSkipLine)
+  const slicePattern = /\b([a-zA-Z_][a-zA-Z0-9_]*)\[([^\]]*:[^\]]*)\]/g;
+
+  return code.replace(slicePattern, (match, identifier, sliceExpr) => {
+    // Skip if this looks like a type annotation
+    if (sliceExpr.includes('|') || sliceExpr.includes('->')) {
+      return match;
+    }
+    // Convert the slice expression
+    return `pySlice(mx, ${identifier}, '${sliceExpr}')`;
+  });
 }
 
 /**
@@ -479,6 +507,7 @@ export function convertLine(line: string, declaredVars: Set<string>): string {
 
   // Apply conversions
   ts = convertKwargs(ts);
+  ts = convertSlices(ts);
   ts = pythonToTypeScript(ts);
 
   // Add semicolon if needed
@@ -651,16 +680,25 @@ export function convertTestFile(
   const { filter, importPath = '../../dist/index.js' } = options;
   const classes = extractTests(source);
 
-  // Check if we need allClose helper
+  // Check which helpers we need
   const needsAllClose = source.includes('np.allclose') || source.includes('assert_allclose');
+  const needsSlice = /\w+\[.*:.*\]/.test(source);
 
   const lines: string[] = [
     "import { describe, it, expect } from 'vitest';",
     `import mx from '${importPath}';`,
   ];
 
+  // Build utils import
+  const utilImports: string[] = [];
   if (needsAllClose) {
-    lines.push("import { allClose, expectAllClose } from '../utils';");
+    utilImports.push('allClose', 'expectAllClose');
+  }
+  if (needsSlice) {
+    utilImports.push('pySlice');
+  }
+  if (utilImports.length > 0) {
+    lines.push(`import { ${utilImports.join(', ')} } from '../utils';`);
   }
 
   lines.push('');
