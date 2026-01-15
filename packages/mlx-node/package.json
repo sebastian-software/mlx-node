@@ -2,18 +2,20 @@
   "name": "mlx-node",
   "version": "0.1.0",
   "description": "Node.js bindings for MLX (Apple's ML framework for Apple Silicon)",
-  "main": "lib/index.js",
-  "types": "lib/index.d.ts",
+  "main": "dist/index.js",
+  "types": "generated/mlx-node.d.ts",
   "type": "module",
   "scripts": {
+    "build:ts": "tsc",
     "build:native": "cmake-js compile",
     "build:native:debug": "cmake-js compile --debug",
-    "build": "npm run build:native",
+    "build": "npm run build:ts && npm run build:native",
     "rebuild": "cmake-js rebuild",
-    "clean": "cmake-js clean && rm -rf generated",
-    "test": "node --test 'test/**/*.test.js'",
-    "preinstall": "npm run build:native",
-    "check:mlx-version": "node scripts/check-mlx-version.js"
+    "clean": "cmake-js clean && rm -rf dist",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:legacy": "node --test 'test/**/*.test.js'",
+    "preinstall": "npm run build:native"
   },
   "keywords": [
     "mlx",
@@ -45,12 +47,18 @@
     "node-addon-api": "^8.5.0"
   },
   "binary": {
-    "napi_versions": [8]
+    "napi_versions": [
+      8
+    ]
   },
   "files": [
-    "lib",
-    "src",
+    "dist",
     "generated",
     "CMakeLists.txt"
-  ]
+  ],
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.17"
+  }
 }
