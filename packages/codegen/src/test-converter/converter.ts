@@ -455,13 +455,25 @@ export function convertLine(line: string, declaredVars: Set<string>): string {
 
   let ts = trimmed;
 
-  // Variable assignment - add 'let' for first use
-  const assignMatch = ts.match(/^([a-z_][a-z0-9_]*)\s*=/i);
-  if (assignMatch) {
-    const varName = assignMatch[1];
-    if (!declaredVars.has(varName)) {
-      ts = `let ${ts}`;
-      declaredVars.add(varName);
+  // Tuple unpacking assignment: a, b = func() -> const [a, b] = func()
+  const tupleAssignMatch = ts.match(/^([a-z_][a-z0-9_]*(?:\s*,\s*[a-z_][a-z0-9_]*)+)\s*=\s*(.+)$/i);
+  if (tupleAssignMatch) {
+    const vars = tupleAssignMatch[1].split(',').map(v => v.trim());
+    const value = tupleAssignMatch[2];
+    const allNew = vars.every(v => !declaredVars.has(v));
+    vars.forEach(v => declaredVars.add(v));
+    const keyword = allNew ? 'const' : '';
+    ts = `${keyword} [${vars.join(', ')}] = ${value}`.trim();
+  }
+  // Single variable assignment - add 'let' for first use
+  else {
+    const assignMatch = ts.match(/^([a-z_][a-z0-9_]*)\s*=/i);
+    if (assignMatch) {
+      const varName = assignMatch[1];
+      if (!declaredVars.has(varName)) {
+        ts = `let ${ts}`;
+        declaredVars.add(varName);
+      }
     }
   }
 
