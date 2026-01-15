@@ -3,7 +3,6 @@
  * Check if the pinned MLX version is up to date
  *
  * Usage:
- *   node scripts/check-mlx-version.js
  *   pnpm check:mlx-version
  *
  * Exit codes:
@@ -17,13 +16,19 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const CMAKE_FILE = join(__dirname, '..', 'CMakeLists.txt');
+const CMAKE_FILE = join(__dirname, '..', '..', 'mlx-node', 'CMakeLists.txt');
 const MLX_REPO = 'ml-explore/mlx';
+
+interface Version {
+  major: number;
+  minor: number;
+  patch: number;
+}
 
 /**
  * Extract MLX version from CMakeLists.txt
  */
-function getPinnedVersion() {
+function getPinnedVersion(): string {
   const content = readFileSync(CMAKE_FILE, 'utf-8');
   const match = content.match(/set\(MLX_GIT_TAG\s+"(v[\d.]+)"\)/);
   if (!match) {
@@ -35,7 +40,7 @@ function getPinnedVersion() {
 /**
  * Fetch latest MLX release from GitHub
  */
-async function getLatestVersion() {
+async function getLatestVersion(): Promise<string> {
   const response = await fetch(
     `https://api.github.com/repos/${MLX_REPO}/releases/latest`,
     {
@@ -57,7 +62,7 @@ async function getLatestVersion() {
 /**
  * Parse version string to comparable parts
  */
-function parseVersion(version) {
+function parseVersion(version: string): Version {
   const match = version.match(/v?(\d+)\.(\d+)\.(\d+)/);
   if (!match) {
     throw new Error(`Invalid version format: ${version}`);
@@ -73,7 +78,7 @@ function parseVersion(version) {
  * Compare two versions
  * Returns: -1 if a < b, 0 if a == b, 1 if a > b
  */
-function compareVersions(a, b) {
+function compareVersions(a: string, b: string): number {
   const va = parseVersion(a);
   const vb = parseVersion(b);
 
@@ -83,7 +88,7 @@ function compareVersions(a, b) {
   return 0;
 }
 
-async function main() {
+async function main(): Promise<void> {
   console.log('Checking MLX version...\n');
 
   try {
@@ -103,7 +108,7 @@ async function main() {
       console.log(`⚠ Update available: ${pinned} → ${latest}`);
       console.log();
       console.log('To update, edit packages/mlx-node/CMakeLists.txt:');
-      console.log(`  set(MLX_VERSION "${latest}")`);
+      console.log(`  set(MLX_GIT_TAG "${latest}")`);
       console.log();
       console.log(`Release notes: https://github.com/${MLX_REPO}/releases/tag/${latest}`);
       process.exit(1);
@@ -113,7 +118,7 @@ async function main() {
       process.exit(0);
     }
   } catch (error) {
-    console.error(`Error: ${error.message}`);
+    console.error(`Error: ${(error as Error).message}`);
     process.exit(2);
   }
 }
