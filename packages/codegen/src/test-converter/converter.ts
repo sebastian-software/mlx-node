@@ -428,20 +428,36 @@ function shouldSkipLine(line: string): { skip: boolean; reason?: string } {
     return { skip: true, reason: 'complex' };
   }
 
-  // Slice assignments (a[1:3] = x) - not yet supported
-  if (/\w+\[.*:.*\]\s*=/.test(line) && !line.startsWith('//')) {
-    return { skip: true, reason: 'slice-assign' };
-  }
-
-  // .at[] indexing (JAX-style) - not yet supported
+  // .at[] indexing (JAX-style) - not yet supported (needs scatter operations)
   if (/\.at\[/.test(line)) {
     return { skip: true, reason: 'at-index' };
   }
 
   // Note: kwargs are now handled by convertKwargs()
   // Note: slices are now handled by convertSlices()
+  // Note: slice assignments are now handled by convertSliceAssignments()
 
   return { skip: false };
+}
+
+/**
+ * Convert Python slice assignments to pySliceUpdate() calls
+ * Examples:
+ *   a[1:3] = 0 -> a = pySliceUpdate(mx, a, '1:3', 0)
+ *   a[:, 0] = x -> a = pySliceUpdate(mx, a, ':, 0', x)
+ */
+function convertSliceAssignments(code: string): string {
+  // Match: identifier[slice] = value
+  // The slice must contain a colon to distinguish from simple indexing
+  const sliceAssignPattern = /^(\s*)([a-zA-Z_][a-zA-Z0-9_]*)\[([^\]]*:[^\]]*)\]\s*=\s*(.+)$/;
+  const match = code.match(sliceAssignPattern);
+
+  if (match) {
+    const [, indent, identifier, sliceExpr, value] = match;
+    return `${indent}${identifier} = pySliceUpdate(mx, ${identifier}, '${sliceExpr}', ${value})`;
+  }
+
+  return code;
 }
 
 /**
@@ -453,7 +469,7 @@ function shouldSkipLine(line: string): { skip: boolean; reason?: string } {
  */
 function convertSlices(code: string): string {
   // Match identifier followed by [...] containing a colon
-  // But not if it's a slice assignment (handled by shouldSkipLine)
+  // But not if it's part of a slice assignment (those are handled separately)
   const slicePattern = /\b([a-zA-Z_][a-zA-Z0-9_]*)\[([^\]]*:[^\]]*)\]/g;
 
   return code.replace(slicePattern, (match, identifier, sliceExpr) => {
@@ -482,6 +498,9 @@ export function convertLine(line: string, declaredVars: Set<string>): string {
   }
 
   let ts = trimmed;
+
+  // Handle slice assignments first: a[1:3] = x -> a = pySliceUpdate(mx, a, '1:3', x)
+  ts = convertSliceAssignments(ts);
 
   // Tuple unpacking assignment: a, b = func() -> const [a, b] = func()
   const tupleAssignMatch = ts.match(/^([a-z_][a-z0-9_]*(?:\s*,\s*[a-z_][a-z0-9_]*)+)\s*=\s*(.+)$/i);
@@ -682,7 +701,8 @@ export function convertTestFile(
 
   // Check which helpers we need
   const needsAllClose = source.includes('np.allclose') || source.includes('assert_allclose');
-  const needsSlice = /\w+\[.*:.*\]/.test(source);
+  const needsSliceRead = /\w+\[.*:.*\]/.test(source);
+  const needsSliceUpdate = /\w+\[.*:.*\]\s*=/.test(source);
 
   const lines: string[] = [
     "import { describe, it, expect } from 'vitest';",
@@ -694,8 +714,11 @@ export function convertTestFile(
   if (needsAllClose) {
     utilImports.push('allClose', 'expectAllClose');
   }
-  if (needsSlice) {
+  if (needsSliceRead) {
     utilImports.push('pySlice');
+  }
+  if (needsSliceUpdate) {
+    utilImports.push('pySliceUpdate');
   }
   if (utilImports.length > 0) {
     lines.push(`import { ${utilImports.join(', ')} } from '../utils';`);

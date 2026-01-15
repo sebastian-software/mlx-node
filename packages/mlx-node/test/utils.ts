@@ -280,3 +280,156 @@ export function pySlice(mx: any, a: any, sliceExpr: string): any {
 
   return result;
 }
+
+/**
+ * Python-style slice assignment utility.
+ *
+ * Updates a portion of an array using Python slice syntax.
+ *
+ * @param mx - The MLX module
+ * @param a - The array to update
+ * @param sliceExpr - Python-style slice expression (e.g., "1:3", ":, 0")
+ * @param value - The value to assign (scalar or array)
+ * @returns A new array with the slice updated
+ *
+ * @example
+ * // Python: a[1:3] = 0
+ * pySliceUpdate(mx, a, '1:3', 0)
+ *
+ * // Python: a[:, 0] = mx.array([1, 2, 3])
+ * pySliceUpdate(mx, a, ':, 0', mx.array([1, 2, 3]))
+ */
+export function pySliceUpdate(mx: any, a: any, sliceExpr: string, value: any): any {
+  const specs = parseSliceExpr(sliceExpr);
+  const shape: number[] = a.shape;
+
+  // Convert value to array if needed
+  const updateValue = typeof value === 'number' || typeof value === 'boolean'
+    ? mx.array(value)
+    : value;
+
+  // Handle simple 1D case: a[start:stop] = value
+  if (specs.length === 1 && specs[0].type === 'slice') {
+    const spec = specs[0];
+    const dim = shape[0];
+    let start = spec.start ?? 0;
+    let stop = spec.stop ?? dim;
+
+    // Handle negative indices
+    if (start < 0) start = dim + start;
+    if (stop < 0) stop = dim + stop;
+
+    // Clamp to valid range
+    start = Math.max(0, Math.min(start, dim));
+    stop = Math.max(0, Math.min(stop, dim));
+
+    const sliceSize = Math.max(0, stop - start);
+
+    // Broadcast value to match slice size if needed
+    let broadcastedUpdate: any;
+    if (updateValue.shape.length === 0) {
+      // Scalar - broadcast to slice shape
+      broadcastedUpdate = mx.broadcast_to(updateValue, [sliceSize, ...shape.slice(1)]);
+    } else if (updateValue.shape[0] !== sliceSize) {
+      // Try to broadcast
+      broadcastedUpdate = mx.broadcast_to(updateValue, [sliceSize, ...shape.slice(1)]);
+    } else {
+      broadcastedUpdate = updateValue;
+    }
+
+    // Use slice_update
+    const startIndices = mx.array([start]);
+    const axes = [0];
+    return mx.slice_update(a, broadcastedUpdate, startIndices, axes);
+  }
+
+  // Handle single index: a[i] = value (not a slice, just indexing)
+  if (specs.length === 1 && specs[0].type === 'index') {
+    const idx = specs[0].index!;
+    const actualIdx = idx < 0 ? shape[0] + idx : idx;
+
+    // Expand value to match the slice we're updating
+    let broadcastedUpdate = updateValue;
+    if (updateValue.shape.length === 0) {
+      broadcastedUpdate = mx.broadcast_to(updateValue, [1, ...shape.slice(1)]);
+    } else {
+      broadcastedUpdate = mx.expand_dims(updateValue, 0);
+    }
+
+    const startIndices = mx.array([actualIdx]);
+    const axes = [0];
+    return mx.slice_update(a, broadcastedUpdate, startIndices, axes);
+  }
+
+  // Multi-dimensional slice update
+  // Build start indices and axes for slice_update
+  const startIndices: number[] = [];
+  const axes: number[] = [];
+  const sliceSizes: number[] = [...shape];
+  let axisOffset = 0;
+
+  for (let i = 0; i < specs.length; i++) {
+    const spec = specs[i];
+    const axis = i + axisOffset;
+
+    if (spec.type === 'ellipsis') {
+      // Ellipsis: skip remaining dimensions
+      const remainingSpecs = specs.length - i - 1;
+      axisOffset = shape.length - remainingSpecs - i - 1;
+      continue;
+    }
+
+    if (spec.type === 'newaxis') {
+      // newaxis in slice assignment - complex case
+      axisOffset++;
+      continue;
+    }
+
+    if (spec.type === 'index') {
+      // Single index
+      const idx = spec.index!;
+      const actualIdx = idx < 0 ? shape[axis] + idx : idx;
+      startIndices.push(actualIdx);
+      axes.push(axis);
+      sliceSizes[axis] = 1;
+      continue;
+    }
+
+    if (spec.type === 'slice') {
+      const dim = shape[axis];
+      let start = spec.start ?? 0;
+      let stop = spec.stop ?? dim;
+
+      // Handle negative indices
+      if (start < 0) start = dim + start;
+      if (stop < 0) stop = dim + stop;
+
+      // Clamp
+      start = Math.max(0, Math.min(start, dim));
+      stop = Math.max(0, Math.min(stop, dim));
+
+      startIndices.push(start);
+      axes.push(axis);
+      sliceSizes[axis] = Math.max(0, stop - start);
+    }
+  }
+
+  // Broadcast update value to match target shape
+  let broadcastedUpdate = updateValue;
+  const targetShape = sliceSizes.filter((_, i) => {
+    // Only include dimensions that aren't being fully indexed
+    const specIdx = axes.indexOf(i);
+    if (specIdx === -1) return true;
+    return specs[specIdx]?.type === 'slice';
+  });
+
+  if (broadcastedUpdate.shape.length === 0) {
+    // Scalar - broadcast to full slice shape
+    const updateShape = axes.map((ax, i) => sliceSizes[ax]);
+    if (updateShape.length > 0) {
+      broadcastedUpdate = mx.broadcast_to(broadcastedUpdate, sliceSizes);
+    }
+  }
+
+  return mx.slice_update(a, broadcastedUpdate, mx.array(startIndices), axes);
+}
