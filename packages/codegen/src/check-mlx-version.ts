@@ -55,7 +55,7 @@ async function getLatestVersion(): Promise<string> {
     throw new Error(`GitHub API error: ${response.status} ${response.statusText}`);
   }
 
-  const data = await response.json();
+  const data = await response.json() as { tag_name: string };
   return data.tag_name;
 }
 
