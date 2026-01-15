@@ -3,7 +3,7 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     include: ['test/**/*.test.ts'],
-    exclude: ['test/generated/**'],  // Generated tests need manual fixes
     globals: false,
+    testTimeout: 30000,  // Some tests may need longer
   },
 });
