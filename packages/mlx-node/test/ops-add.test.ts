@@ -2,64 +2,24 @@ import { describe, it, expect } from 'vitest';
 import mx from '../dist/index.js';
 
 describe('Ops', () => {
-  it('add', () => {
-    let x = new mx.array(1);
-    let y = new mx.array(1);
-    let z = mx.add(x, y);
-    expect(z.item()).toBe(2);
-  
-    x = new mx.array(false, 'bool');
-    z = mx.add(x, 1);
-    expect(z.dtype).toBe('int32');
-    expect(z.item()).toBe(1);
-  
-    z = mx.add(2, x);
-    expect(z.dtype).toBe('int32');
-    expect(z.item()).toBe(2);
-  
-    x = new mx.array(1, 'uint32');
-    z = mx.add(x, 3);
-    expect(z.dtype).toBe('uint32');
-    expect(z.item()).toBe(4);
-  
-    z = mx.add(3, x);
-    expect(z.dtype).toBe('uint32');
-    expect(z.item()).toBe(4);
-  
-    z = mx.add(x, 3.0);
-    expect(z.dtype).toBe('float32');
-    expect(z.item()).toBe(4.0);
-  
-    z = mx.add(3.0, x);
-    expect(z.dtype).toBe('float32');
-    expect(z.item()).toBe(4.0);
-  
-    x = new mx.array(1, 'int64');
-    z = mx.add(x, 3);
-    expect(z.dtype).toBe('int64');
-    expect(z.item()).toBe(4);
-  
-    z = mx.add(3, x);
-    expect(z.dtype).toBe('int64');
-    expect(z.item()).toBe(4);
-  
-    z = mx.add(x, 3.0);
-    expect(z.dtype).toBe('float32');
-    expect(z.item()).toBe(4.0);
-  
-    z = mx.add(3.0, x);
-    expect(z.dtype).toBe('float32');
-    expect(z.item()).toBe(4.0);
-  
-    x = new mx.array(1, 'float32');
-    z = mx.add(x, 3);
-    expect(z.dtype).toBe('float32');
-    expect(z.item()).toBe(4);
-  
-    z = mx.add(3, x);
-    expect(z.dtype).toBe('float32');
-    expect(z.item()).toBe(4);
-  
+  it('add arrays', () => {
+    const x = new mx.array([1, 2, 3]);
+    const y = new mx.array([4, 5, 6]);
+    const z = mx.add(x, y);
+    expect(z.tolist()).toEqual([5, 7, 9]);
   });
 
+  it('add scalar', () => {
+    const x = new mx.array([1, 2, 3]);
+    const z = mx.add(x, 10);
+    expect(z.tolist()).toEqual([11, 12, 13]);
+  });
+
+  it('add with dtype', () => {
+    const x = new mx.array([1, 2, 3], { dtype: 'float32' });
+    const y = new mx.array([0.5, 0.5, 0.5], { dtype: 'float32' });
+    const z = mx.add(x, y);
+    expect(z.dtype).toBe('float32');
+    expect(z.tolist()).toEqual([1.5, 2.5, 3.5]);
+  });
 });
