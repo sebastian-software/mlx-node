@@ -16,7 +16,7 @@ export {
 } from './sampler.js';
 
 export {
-  Generator,
+  TextGenerator,
   generate,
   generateAll,
   type GenerateConfig,

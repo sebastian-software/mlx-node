@@ -61,7 +61,7 @@ export interface GenerativeModel {
 /**
  * Generator class for autoregressive text generation
  */
-export class Generator {
+export class TextGenerator {
   private sampler: Sampler;
   private cache: ModelCache | null = null;
   private generatedTokens: number[] = [];
@@ -233,7 +233,7 @@ export function generate(
   promptTokens: number[],
   config?: GenerateConfig
 ): Generator<GenerationStep, void, unknown> {
-  const generator = new Generator(mx, model, config);
+  const generator = new TextGenerator(mx, model, config);
   return generator.generate(promptTokens);
 }
 
@@ -246,6 +246,6 @@ export function generateAll(
   promptTokens: number[],
   config?: GenerateConfig
 ): number[] {
-  const generator = new Generator(mx, model, config);
+  const generator = new TextGenerator(mx, model, config);
   return generator.generateAll(promptTokens);
 }
