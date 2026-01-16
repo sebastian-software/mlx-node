@@ -550,6 +550,42 @@ Napi::Value StringMapToNapi(Napi::Env env,
 }
 
 // ============================================================================
+// Custom Function Overrides
+// These override auto-generated functions to add missing functionality
+// ============================================================================
+
+/**
+ * Take elements from an array along an axis.
+ *
+ * This overrides the auto-generated take to support the optional axis parameter.
+ * - take(a, indices) - flattens array and takes elements
+ * - take(a, indices, axis) - takes elements along specified axis (for embedding lookup)
+ *
+ * Reference: https://ml-explore.github.io/mlx/build/html/python/ops.html#mlx.core.take
+ */
+Napi::Value Wrap_take_with_axis(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  try {
+    if (info.Length() < 2) {
+      throw Napi::TypeError::New(env, "take() requires array and indices arguments");
+    }
+
+    mx::array a = NapiToArray(info[0]);
+    mx::array indices = NapiToArray(info[1]);
+    mx::StreamOrDevice s = {};
+
+    // Use ternary to avoid default constructor (mx::array has none)
+    mx::array result = (info.Length() > 2 && info[2].IsNumber())
+                           ? mx::take(a, indices, info[2].As<Napi::Number>().Int32Value(), s)
+                           : mx::take(a, indices, s);
+
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
+}
+
+// ============================================================================
 // I/O Function Wrappers
 // Reference: https://github.com/ml-explore/mlx/blob/main/python/src/load.cpp
 // ============================================================================
@@ -4207,6 +4243,10 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("rope", Napi::Function::New(env, Wrap_rope));
   exports.Set("scaled_dot_product_attention",
               Napi::Function::New(env, Wrap_scaled_dot_product_attention));
+
+  // Custom function overrides (replaces auto-generated versions)
+  // These MUST come after @@EXPORTS@@ to override the auto-generated functions
+  exports.Set("take", Napi::Function::New(env, Wrap_take_with_axis));
 
   return exports;
 }
