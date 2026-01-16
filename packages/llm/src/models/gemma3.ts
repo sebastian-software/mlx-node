@@ -20,13 +20,47 @@
 
 import type { MLXArray, MX, Weights } from '../types.js';
 import { Module, ModuleList } from '../layers/module.js';
-import { Linear } from '../layers/linear.js';
-import { Embedding } from '../layers/embedding.js';
+import { Linear, QuantizedLinear } from '../layers/linear.js';
+import { Embedding, QuantizedEmbedding } from '../layers/embedding.js';
 import { RMSNorm } from '../layers/rms-norm.js';
 import { DualRoPE } from '../layers/rope.js';
-import { GatedMLP } from '../layers/mlp.js';
 import { KVCache, RotatingKVCache, ModelCache } from '../cache/kv-cache.js';
 import type { GenerativeModel } from '../generation/generate.js';
+
+/**
+ * Quantization configuration
+ */
+export interface QuantizationConfig {
+  groupSize: number;
+  bits: number;
+}
+
+/**
+ * Helper type for linear layer (can be either Linear or QuantizedLinear)
+ */
+type LinearLayer = Linear | QuantizedLinear;
+
+/**
+ * Create a linear layer, either regular or quantized based on config
+ */
+function createLinear(
+  mx: MX,
+  inputDim: number,
+  outputDim: number,
+  bias: boolean,
+  quantization?: QuantizationConfig
+): LinearLayer {
+  if (quantization) {
+    return new QuantizedLinear(mx, {
+      inputDim,
+      outputDim,
+      bias,
+      groupSize: quantization.groupSize,
+      bits: quantization.bits
+    });
+  }
+  return new Linear(mx, { inputDim, outputDim, bias });
+}
 
 /**
  * Gemma3 model configuration
@@ -48,6 +82,7 @@ export interface Gemma3Config {
   attentionLogitSoftcap?: number;
   finalLogitSoftcap?: number;
   tieWordEmbeddings?: boolean;
+  quantization?: QuantizationConfig;  // Optional quantization config
 }
 
 /**
@@ -81,10 +116,10 @@ class Gemma3Attention extends Module {
   private readonly isGlobalLayer: boolean;
   private readonly slidingWindow: number;
 
-  private qProj!: Linear;
-  private kProj!: Linear;
-  private vProj!: Linear;
-  private oProj!: Linear;
+  private qProj!: LinearLayer;
+  private kProj!: LinearLayer;
+  private vProj!: LinearLayer;
+  private oProj!: LinearLayer;
   private qNorm!: RMSNorm;
   private kNorm!: RMSNorm;
   private rope: DualRoPE;
@@ -106,33 +141,27 @@ class Gemma3Attention extends Module {
     // Pattern: every Nth layer uses full attention
     this.isGlobalLayer = (layerIndex % config.slidingWindowPattern) === 0;
 
-    // Q, K, V, O projections
-    this.qProj = new Linear(mx, {
-      inputDim: config.hiddenSize,
-      outputDim: this.numHeads * this.headDim,
-      bias: false
-    });
+    const quant = config.quantization;
+
+    // Q, K, V, O projections (quantized if config specifies)
+    this.qProj = createLinear(
+      mx, config.hiddenSize, this.numHeads * this.headDim, false, quant
+    );
     this.registerModule('q_proj', this.qProj);
 
-    this.kProj = new Linear(mx, {
-      inputDim: config.hiddenSize,
-      outputDim: this.numKVHeads * this.headDim,
-      bias: false
-    });
+    this.kProj = createLinear(
+      mx, config.hiddenSize, this.numKVHeads * this.headDim, false, quant
+    );
     this.registerModule('k_proj', this.kProj);
 
-    this.vProj = new Linear(mx, {
-      inputDim: config.hiddenSize,
-      outputDim: this.numKVHeads * this.headDim,
-      bias: false
-    });
+    this.vProj = createLinear(
+      mx, config.hiddenSize, this.numKVHeads * this.headDim, false, quant
+    );
     this.registerModule('v_proj', this.vProj);
 
-    this.oProj = new Linear(mx, {
-      inputDim: this.numHeads * this.headDim,
-      outputDim: config.hiddenSize,
-      bias: false
-    });
+    this.oProj = createLinear(
+      mx, this.numHeads * this.headDim, config.hiddenSize, false, quant
+    );
     this.registerModule('o_proj', this.oProj);
 
     // Per-head Q/K normalization (Gemma3 specific)
@@ -197,8 +226,9 @@ class Gemma3Attention extends Module {
     v = this.mx.transpose(v, [0, 2, 1, 3]);
 
     // Scaled dot-product attention
+    // Pass empty string for mask_mode when using custom mask
     const output = this.mx.fast.scaledDotProductAttention(
-      q, k, v, this.scale, mask
+      q, k, v, this.scale, '', mask
     );
 
     // Transpose back and reshape
@@ -214,16 +244,58 @@ class Gemma3Attention extends Module {
 
 /**
  * Gemma3 MLP with GELU activation
+ *
+ * Supports both regular and quantized weights.
+ * Uses gated activation: down(gelu(gate(x)) * up(x))
  */
-class Gemma3MLP extends GatedMLP {
-  constructor(mx: MX, config: Gemma3Config) {
-    super(mx, {
-      hiddenSize: config.hiddenSize,
-      intermediateSize: config.intermediateSize,
-      activation: 'gelu',
-      bias: false,
-      gatedActivation: true
-    });
+class Gemma3MLP extends Module {
+  private gateProj!: LinearLayer;
+  private upProj!: LinearLayer;
+  private downProj!: LinearLayer;
+
+  constructor(
+    private mx: MX,
+    config: Gemma3Config
+  ) {
+    super();
+
+    const quant = config.quantization;
+
+    this.gateProj = createLinear(
+      mx, config.hiddenSize, config.intermediateSize, false, quant
+    );
+    this.registerModule('gate_proj', this.gateProj);
+
+    this.upProj = createLinear(
+      mx, config.hiddenSize, config.intermediateSize, false, quant
+    );
+    this.registerModule('up_proj', this.upProj);
+
+    this.downProj = createLinear(
+      mx, config.intermediateSize, config.hiddenSize, false, quant
+    );
+    this.registerModule('down_proj', this.downProj);
+  }
+
+  /**
+   * GELU activation: 0.5 * x * (1 + erf(x / sqrt(2)))
+   */
+  private gelu(x: MLXArray): MLXArray {
+    const sqrt2 = Math.sqrt(2);
+    const xNorm = this.mx.divide(x, sqrt2);
+    const erfVal = this.mx.erf(xNorm);
+    const onePlusErf = this.mx.add(erfVal, 1);
+    const xTimesErf = this.mx.multiply(x, onePlusErf);
+    return this.mx.multiply(xTimesErf, 0.5);
+  }
+
+  forward(x: MLXArray): MLXArray {
+    // Gated MLP: down(gelu(gate(x)) * up(x))
+    const gate = this.gateProj.forward(x);
+    const up = this.upProj.forward(x);
+    const gateActivated = this.gelu(gate);
+    const gatedUp = this.mx.multiply(gateActivated, up);
+    return this.downProj.forward(gatedUp);
   }
 }
 
@@ -325,7 +397,7 @@ class Gemma3TransformerBlock extends Module {
  * Gemma3 Language Model
  */
 class Gemma3LanguageModel extends Module {
-  private embedTokens: Embedding;
+  private embedTokens: Embedding | QuantizedEmbedding;
   private layers: ModuleList;
   private norm: RMSNorm;
 
@@ -335,11 +407,20 @@ class Gemma3LanguageModel extends Module {
   ) {
     super();
 
-    // Token embeddings
-    this.embedTokens = new Embedding(mx, {
-      numEmbeddings: config.vocabSize,
-      embeddingDim: config.hiddenSize
-    });
+    // Token embeddings (quantized if config specifies)
+    if (config.quantization) {
+      this.embedTokens = new QuantizedEmbedding(mx, {
+        numEmbeddings: config.vocabSize,
+        embeddingDim: config.hiddenSize,
+        groupSize: config.quantization.groupSize,
+        bits: config.quantization.bits
+      });
+    } else {
+      this.embedTokens = new Embedding(mx, {
+        numEmbeddings: config.vocabSize,
+        embeddingDim: config.hiddenSize
+      });
+    }
     this.registerModule('embed_tokens', this.embedTokens);
 
     // Transformer layers
@@ -393,11 +474,11 @@ class Gemma3LanguageModel extends Module {
 
     // Create row indices (query positions): [0, 1, ..., seqLen-1] + offset
     const rows = this.mx.arange(offset, offset + seqLen);
-    const rowsExpanded = this.mx.expandDims(rows, 1); // (seqLen, 1)
+    const rowsExpanded = this.mx.expand_dims(rows, 1); // (seqLen, 1)
 
     // Create column indices (key positions): [0, 1, ..., totalLen-1]
     const cols = this.mx.arange(0, totalLen);
-    const colsExpanded = this.mx.expandDims(cols, 0); // (1, totalLen)
+    const colsExpanded = this.mx.expand_dims(cols, 0); // (1, totalLen)
 
     // mask[i,j] = -inf where col > row (future positions)
     // Using broadcasting: (seqLen, 1) vs (1, totalLen) -> (seqLen, totalLen)
@@ -416,7 +497,7 @@ class Gemma3LanguageModel extends Module {
  */
 export class Gemma3Model extends Module implements GenerativeModel {
   private model: Gemma3LanguageModel;
-  private lmHead: Linear | null = null;
+  private lmHead: LinearLayer | null = null;
 
   readonly config: Gemma3Config & {
     eosTokenId?: number;
@@ -437,12 +518,11 @@ export class Gemma3Model extends Module implements GenerativeModel {
     this.registerModule('model', this.model);
 
     // LM head (may be tied with embeddings)
+    // Note: For quantized models with tied embeddings, we use the embedding weight directly
     if (!config.tieWordEmbeddings) {
-      this.lmHead = new Linear(mx, {
-        inputDim: config.hiddenSize,
-        outputDim: config.vocabSize,
-        bias: false
-      });
+      this.lmHead = createLinear(
+        mx, config.hiddenSize, config.vocabSize, false, config.quantization
+      );
       this.registerModule('lm_head', this.lmHead);
     }
   }
@@ -493,26 +573,5 @@ export function loadGemma3(
   return model;
 }
 
-/**
- * Parse Gemma3 config from HuggingFace config.json
- */
-export function parseGemma3Config(configJson: Record<string, unknown>): Gemma3Config {
-  return {
-    vocabSize: (configJson.vocab_size as number) ?? 262144,
-    hiddenSize: (configJson.hidden_size as number) ?? 2560,
-    numHiddenLayers: (configJson.num_hidden_layers as number) ?? 34,
-    numAttentionHeads: (configJson.num_attention_heads as number) ?? 8,
-    numKeyValueHeads: (configJson.num_key_value_heads as number) ?? 4,
-    headDim: (configJson.head_dim as number) ?? 256,
-    intermediateSize: (configJson.intermediate_size as number) ?? 10240,
-    rmsNormEps: (configJson.rms_norm_eps as number) ?? 1e-6,
-    ropeTheta: (configJson.rope_theta as number) ?? 1000000,
-    ropeLocalBaseFreq: (configJson.rope_local_base_freq as number) ?? 10000,
-    maxPositionEmbeddings: (configJson.max_position_embeddings as number) ?? 32768,
-    slidingWindow: (configJson.sliding_window as number) ?? 512,
-    slidingWindowPattern: (configJson.sliding_window_pattern as number) ?? 6,
-    attentionLogitSoftcap: configJson.attn_logit_softcapping as number | undefined,
-    finalLogitSoftcap: configJson.final_logit_softcapping as number | undefined,
-    tieWordEmbeddings: (configJson.tie_word_embeddings as boolean) ?? true
-  };
-}
+// Note: parseGemma3Config is in loading/config.ts to avoid circular dependencies
+// and to properly handle multimodal models with nested text_config

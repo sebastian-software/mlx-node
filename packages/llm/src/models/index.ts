@@ -8,10 +8,12 @@
 export {
   Gemma3Model,
   loadGemma3,
-  parseGemma3Config,
   GEMMA3_4B_CONFIG,
-  type Gemma3Config
+  type Gemma3Config,
+  type QuantizationConfig
 } from './gemma3.js';
+
+// Note: parseGemma3Config is exported from loading/index.ts
 
 // GPT-OSS and Phi3 will be added here
 // export { GptOssModel, loadGptOss, parseGptOssConfig } from './gpt-oss.js';
