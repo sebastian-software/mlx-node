@@ -18,9 +18,6 @@ export class Linear extends Module {
   readonly outputDim: number;
   readonly hasBias: boolean;
 
-  private weight!: MLXArray;
-  private bias: MLXArray | null = null;
-
   constructor(
     private mx: MX,
     options: LinearOptions
@@ -32,16 +29,17 @@ export class Linear extends Module {
   }
 
   /**
-   * Initialize with weight tensors
+   * Get the weight parameter
    */
-  initialize(weight: MLXArray, bias?: MLXArray): void {
-    this.weight = weight;
-    this.registerParameter('weight', weight);
+  get weight(): MLXArray {
+    return this.getParameter('weight');
+  }
 
-    if (bias && this.hasBias) {
-      this.bias = bias;
-      this.registerParameter('bias', bias);
-    }
+  /**
+   * Get the bias parameter (if present)
+   */
+  get bias(): MLXArray | undefined {
+    return this.hasParameter('bias') ? this.getParameter('bias') : undefined;
   }
 
   /**
@@ -51,10 +49,12 @@ export class Linear extends Module {
     // x: (..., inputDim)
     // weight: (outputDim, inputDim)
     // result: (..., outputDim)
-    let out = this.mx.matmul(x, this.weight.T);
+    const weightT = this.mx.transpose(this.weight);
+    let out = this.mx.matmul(x, weightT);
 
-    if (this.bias) {
-      out = this.mx.add(out, this.bias);
+    const bias = this.bias;
+    if (bias) {
+      out = this.mx.add(out, bias);
     }
 
     return out;
@@ -63,6 +63,9 @@ export class Linear extends Module {
 
 /**
  * Quantized Linear layer for 4/8-bit weights
+ *
+ * Uses quantized_matmul for efficient inference with compressed weights.
+ * Weights are stored as (weight, scales, biases) for affine quantization.
  */
 export interface QuantizedLinearOptions extends LinearOptions {
   groupSize?: number;
@@ -75,11 +78,6 @@ export class QuantizedLinear extends Module {
   readonly hasBias: boolean;
   readonly groupSize: number;
   readonly bits: number;
-
-  private weight!: MLXArray;
-  private scales!: MLXArray;
-  private biases!: MLXArray;
-  private bias: MLXArray | null = null;
 
   constructor(
     private mx: MX,
@@ -94,35 +92,68 @@ export class QuantizedLinear extends Module {
   }
 
   /**
-   * Initialize with quantized weight tensors
+   * Get the quantized weight parameter
    */
-  initialize(
-    weight: MLXArray,
-    scales: MLXArray,
-    biases: MLXArray,
-    bias?: MLXArray
-  ): void {
-    this.weight = weight;
-    this.scales = scales;
-    this.biases = biases;
-    this.registerParameter('weight', weight);
-    this.registerParameter('scales', scales);
-    this.registerParameter('biases', biases);
+  get weight(): MLXArray {
+    return this.getParameter('weight');
+  }
 
-    if (bias && this.hasBias) {
-      this.bias = bias;
-      this.registerParameter('bias', bias);
-    }
+  /**
+   * Get the scales parameter
+   */
+  get scales(): MLXArray {
+    return this.getParameter('scales');
+  }
+
+  /**
+   * Get the quantization biases parameter (not output bias)
+   */
+  get quantBiases(): MLXArray {
+    return this.getParameter('biases');
+  }
+
+  /**
+   * Get the output bias parameter (if present)
+   */
+  get bias(): MLXArray | undefined {
+    return this.hasParameter('bias') ? this.getParameter('bias') : undefined;
   }
 
   /**
    * Forward pass with quantized matmul
-   * Note: This requires mx.quantized_matmul or similar
+   *
+   * quantized_matmul(x, w, scales, biases, transpose=True, group_size, bits)
    */
   forward(x: MLXArray): MLXArray {
-    // TODO: Use quantized matmul when available
-    // For now, this is a placeholder that would need the actual
-    // quantized matmul implementation from mlx-node
-    throw new Error('QuantizedLinear requires quantized_matmul support in mlx-node');
+    // Access quantized_matmul from mx
+    const quantizedMatmul = (this.mx as unknown as {
+      quantized_matmul: (
+        x: MLXArray, w: MLXArray, scales: MLXArray, biases: MLXArray | undefined,
+        transpose?: boolean, groupSize?: number, bits?: number
+      ) => MLXArray
+    }).quantized_matmul;
+
+    if (!quantizedMatmul) {
+      throw new Error('quantized_matmul not available in mx');
+    }
+
+    // Call quantized matmul: output = x @ dequantize(w).T
+    let out = quantizedMatmul(
+      x,
+      this.weight,
+      this.scales,
+      this.quantBiases,
+      true,  // transpose
+      this.groupSize,
+      this.bits
+    );
+
+    // Add output bias if present
+    const bias = this.bias;
+    if (bias) {
+      out = this.mx.add(out, bias);
+    }
+
+    return out;
   }
 }

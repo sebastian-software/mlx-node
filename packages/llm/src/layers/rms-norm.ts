@@ -17,8 +17,6 @@ export class RMSNorm extends Module {
   readonly dims: number;
   readonly eps: number;
 
-  private weight!: MLXArray;
-
   constructor(
     private mx: MX,
     options: RMSNormOptions
@@ -29,11 +27,10 @@ export class RMSNorm extends Module {
   }
 
   /**
-   * Initialize with weight tensor
+   * Get the weight parameter
    */
-  initialize(weight: MLXArray): void {
-    this.weight = weight;
-    this.registerParameter('weight', weight);
+  get weight(): MLXArray {
+    return this.getParameter('weight');
   }
 
   /**

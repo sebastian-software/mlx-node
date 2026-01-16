@@ -80,21 +80,31 @@ export class MLP extends Module {
 
   /**
    * Apply activation function
+   * Implemented manually since mlx-node doesn't expose all activation functions
    */
   protected applyActivation(x: MLXArray): MLXArray {
     switch (this.activation) {
       case 'relu':
-        return this.mx.relu(x);
+        // relu(x) = max(x, 0)
+        return this.mx.maximum(x, 0);
       case 'gelu':
-        return this.mx.gelu(x);
+        // gelu(x) = 0.5 * x * (1 + erf(x / sqrt(2)))
+        const sqrt2 = Math.sqrt(2);
+        const xNorm = this.mx.divide(x, sqrt2);
+        const erfVal = this.mx.erf(xNorm);
+        const onePlusErf = this.mx.add(erfVal, 1);
+        const xTimesErf = this.mx.multiply(x, onePlusErf);
+        return this.mx.multiply(xTimesErf, 0.5);
       case 'silu':
-        return this.mx.silu(x);
+        // silu(x) = x * sigmoid(x)
+        return this.mx.multiply(x, this.mx.sigmoid(x));
       case 'tanh':
         return this.mx.tanh(x);
       case 'sigmoid':
         return this.mx.sigmoid(x);
       default:
-        return this.mx.silu(x);
+        // Default to silu
+        return this.mx.multiply(x, this.mx.sigmoid(x));
     }
   }
 

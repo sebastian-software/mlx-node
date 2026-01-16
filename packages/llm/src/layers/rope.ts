@@ -78,10 +78,18 @@ export class RoPE {
   forward(
     q: MLXArray,
     k: MLXArray,
-    offset: number | MLXArray = 0
+    offset: number = 0
   ): [MLXArray, MLXArray] {
-    return this.mx.fast.rope(
+    // mx.fast.rope operates on a single array, so call it separately for q and k
+    const rotatedQ = this.mx.fast.rope(
       q,
+      this.dims,
+      this.traditional,
+      this.base,
+      this.scale,
+      offset
+    );
+    const rotatedK = this.mx.fast.rope(
       k,
       this.dims,
       this.traditional,
@@ -89,6 +97,7 @@ export class RoPE {
       this.scale,
       offset
     );
+    return [rotatedQ, rotatedK];
   }
 }
 
@@ -128,7 +137,7 @@ export class DualRoPE {
   forwardGlobal(
     q: MLXArray,
     k: MLXArray,
-    offset: number | MLXArray = 0
+    offset: number = 0
   ): [MLXArray, MLXArray] {
     return this.globalRope.forward(q, k, offset);
   }
@@ -139,7 +148,7 @@ export class DualRoPE {
   forwardLocal(
     q: MLXArray,
     k: MLXArray,
-    offset: number | MLXArray = 0
+    offset: number = 0
   ): [MLXArray, MLXArray] {
     return this.localRope.forward(q, k, offset);
   }
@@ -191,33 +200,33 @@ export class LongRoPE {
   forward(
     q: MLXArray,
     k: MLXArray,
-    offset: number | MLXArray = 0,
+    offset: number = 0,
     seqLen?: number
   ): [MLXArray, MLXArray] {
     // Determine which scaling to use based on sequence length
-    const effectiveLen = seqLen ?? (typeof offset === 'number' ? offset : 0);
+    const effectiveLen = seqLen ?? offset;
     const useShortFactor = effectiveLen <= this.originalMaxPosition;
 
+    let effectiveScale: number;
     if (this.scalingType === 'linear') {
-      // Simple linear scaling
-      return this.mx.fast.rope(
-        q,
-        k,
-        this.dims,
-        this.traditional,
-        this.base,
-        this.scale,
-        offset
-      );
+      effectiveScale = this.scale;
+    } else {
+      // For su/longrope, we need custom frequency computation
+      // This is a simplified version - full implementation would need
+      // to apply the short/long factors to individual frequency dimensions
+      effectiveScale = useShortFactor ? 1.0 : this.scale;
     }
 
-    // For su/longrope, we need custom frequency computation
-    // This is a simplified version - full implementation would need
-    // to apply the short/long factors to individual frequency dimensions
-    const effectiveScale = useShortFactor ? 1.0 : this.scale;
-
-    return this.mx.fast.rope(
+    // mx.fast.rope operates on a single array, so call it separately for q and k
+    const rotatedQ = this.mx.fast.rope(
       q,
+      this.dims,
+      this.traditional,
+      this.base,
+      effectiveScale,
+      offset
+    );
+    const rotatedK = this.mx.fast.rope(
       k,
       this.dims,
       this.traditional,
@@ -225,6 +234,7 @@ export class LongRoPE {
       effectiveScale,
       offset
     );
+    return [rotatedQ, rotatedK];
   }
 }
 

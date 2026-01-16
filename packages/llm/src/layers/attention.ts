@@ -186,7 +186,7 @@ export class Attention extends Module {
 
     // Scaled dot-product attention
     const output = this.mx.fast.scaledDotProductAttention(
-      q, k, v, this.scale, mask
+      q, k, v, this.scale, '', mask
     );
 
     // Transpose back and reshape: (batch, numHeads, seqLen, headDim) -> (batch, seqLen, hiddenSize)
@@ -339,7 +339,7 @@ export class InterleavedAttention extends Attention {
 
     // Attention
     const output = this.mx.fast.scaledDotProductAttention(
-      q, k, v, this.scale, effectiveMask
+      q, k, v, this.scale, '', effectiveMask
     );
 
     // Reshape and project
