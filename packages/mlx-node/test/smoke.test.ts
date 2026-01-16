@@ -424,10 +424,11 @@ describe('Random', () => {
     expect(Math.abs(mean)).toBeLessThan(0.2);
   });
 
-  it.skip('generates random integers', () => {
-    // TODO: randint API needs investigation
+  it('generates random integers', () => {
     const a = mx.random.randint(0, 10, [100]);
     expect(a.shape).toEqual([100]);
+    const list = a.tolist();
+    expect(list.every((x: number) => x >= 0 && x < 10 && Number.isInteger(x))).toBe(true);
   });
 
   it('sets seed', () => {
@@ -472,11 +473,12 @@ describe('Broadcasting', () => {
 });
 
 describe('Memory and Evaluation', () => {
-  // Note: eval is a reserved word in JS, binding may use different name
-  it.skip('eval forces computation', () => {
+  it('lazy evaluation happens on access', () => {
+    // Note: mx.eval() doesn't exist (reserved word in JS)
+    // Evaluation happens automatically when accessing values
     const a = new mx.array([1, 2, 3]);
     const b = mx.add(a, 1);
-    // mx.eval(b); // reserved word
+    // Calling tolist() forces evaluation
     expect(b.tolist()).toEqual([2, 3, 4]);
   });
 });
