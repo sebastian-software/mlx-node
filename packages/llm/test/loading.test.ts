@@ -204,9 +204,7 @@ describe('Model Loading', () => {
       assert.deepStrictEqual(logits.shape, [1, 3, 256]);
     });
 
-    test.skip('model can create cache and generate', () => {
-      // TODO: Fix KV cache slice_axis issue - the cache arrays lose their shape info
-      // between updates. Needs investigation.
+    test('model can create cache and generate', () => {
       const { model } = loadModel(mx, TEST_MODEL_DIR);
 
       // Create cache
