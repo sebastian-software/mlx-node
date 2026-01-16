@@ -27,6 +27,7 @@ const HEADERS = [
   'linalg.h',
   'fft.h',
   'random.h',
+  'fast.h',
 ];
 
 // Python binding files (for export list)
@@ -35,6 +36,7 @@ const PYTHON_FILES = [
   'linalg.cpp',
   'fft.cpp',
   'random.cpp',
+  'fast.cpp',
 ];
 
 async function main() {

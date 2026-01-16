@@ -2,6 +2,7 @@
 // Generated from C++ headers - DO NOT EDIT
 
 #include <mlx/mlx.h>
+#include <mlx/fast.h>
 #include <napi.h>
 
 #include <functional>

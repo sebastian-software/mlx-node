@@ -13,22 +13,40 @@ describe('fast namespace', () => {
     expect(mx.fast).toBeDefined();
   });
 
-  it('documents unavailable fast operations', () => {
-    // These operations require native binding support that hasn't been generated yet.
-    // When they become available, these tests should be updated to verify functionality.
-    // For now, we just document that they're not yet available.
-    const fastOps = ['rmsNorm', 'rope', 'scaledDotProductAttention'];
+  it('fast operations are available as functions', () => {
+    expect(typeof mx.fast.rmsNorm).toBe('function');
+    expect(typeof mx.fast.rope).toBe('function');
+    expect(typeof mx.fast.scaledDotProductAttention).toBe('function');
+  });
 
-    for (const op of fastOps) {
-      const fn = mx.fast[op as keyof typeof mx.fast];
-      if (fn === undefined) {
-        // Expected: fast operations not yet in native bindings
-        expect(fn).toBeUndefined();
-      } else {
-        // If available, should be a function
-        expect(typeof fn).toBe('function');
-      }
-    }
+  it('rmsNorm normalizes correctly', () => {
+    const x = new mx.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]);
+    const result = mx.fast.rmsNorm(x, null, 1e-5) as { shape: number[] };
+    expect(result.shape).toEqual([2, 3]);
+  });
+
+  it('rmsNorm with weight parameter', () => {
+    const x = new mx.array([[1.0, 2.0, 3.0]]);
+    const weight = new mx.array([1.0, 1.0, 1.0]);
+    const result = mx.fast.rmsNorm(x, weight, 1e-5) as { shape: number[] };
+    expect(result.shape).toEqual([1, 3]);
+  });
+
+  it('rope applies rotary position embedding', () => {
+    // Create 3D input: (batch, seq, dims) where dims must be even
+    const x = new mx.array(Array(128).fill(1.0)).reshape([1, 4, 32]) as unknown as Parameters<typeof mx.fast.rope>[0];
+    const result = mx.fast.rope(x, 32, false, 10000.0, 1.0, 0) as { shape: number[] };
+    expect(result.shape).toEqual([1, 4, 32]);
+  });
+
+  it('scaledDotProductAttention computes attention', () => {
+    // Create 4D inputs: (batch, seq, heads, dim)
+    const q = new mx.array(Array(64).fill(1.0)).reshape([1, 4, 2, 8]) as unknown as Parameters<typeof mx.fast.scaledDotProductAttention>[0];
+    const k = new mx.array(Array(64).fill(1.0)).reshape([1, 4, 2, 8]) as unknown as Parameters<typeof mx.fast.scaledDotProductAttention>[1];
+    const v = new mx.array(Array(64).fill(1.0)).reshape([1, 4, 2, 8]) as unknown as Parameters<typeof mx.fast.scaledDotProductAttention>[2];
+    const scale = 1.0 / Math.sqrt(8);
+    const result = mx.fast.scaledDotProductAttention(q, k, v, scale) as { shape: number[] };
+    expect(result.shape).toEqual([1, 4, 2, 8]);
   });
 });
 

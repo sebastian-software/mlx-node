@@ -1,6 +1,7 @@
 // Auto-generated N-API bindings for MLX
 // Generated from C++ headers - DO NOT EDIT
 
+#include <mlx/fast.h>
 #include <mlx/mlx.h>
 #include <napi.h>
 
@@ -3712,6 +3713,92 @@ Napi::Value Wrap_permutation(const Napi::CallbackInfo& info) {
   }
 }
 
+Napi::Value Wrap_rms_norm(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  mx::array x = NapiToArray(info[0]);
+  std::optional<mx::array> weight = info.Length() > 1 && !info[1].IsUndefined() && !info[1].IsNull()
+                                        ? std::optional<mx::array>(NapiToArray(info[1]))
+                                        : std::nullopt;
+  double eps = info[2].As<Napi::Number>().DoubleValue();
+  mx::StreamOrDevice s = {};
+  try {
+    mx::array result = mx::fast::rms_norm(x, weight, eps, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
+}
+
+Napi::Value Wrap_layer_norm(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  mx::array x = NapiToArray(info[0]);
+  std::optional<mx::array> weight = info.Length() > 1 && !info[1].IsUndefined() && !info[1].IsNull()
+                                        ? std::optional<mx::array>(NapiToArray(info[1]))
+                                        : std::nullopt;
+  std::optional<mx::array> bias = info.Length() > 2 && !info[2].IsUndefined() && !info[2].IsNull()
+                                      ? std::optional<mx::array>(NapiToArray(info[2]))
+                                      : std::nullopt;
+  double eps = info[3].As<Napi::Number>().DoubleValue();
+  mx::StreamOrDevice s = {};
+  try {
+    mx::array result = mx::fast::layer_norm(x, weight, bias, eps, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
+}
+
+Napi::Value Wrap_rope(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  mx::array x = NapiToArray(info[0]);
+  int dims = info[1].As<Napi::Number>().Int32Value();
+  bool traditional = info[2].As<Napi::Boolean>().Value();
+  std::optional<float> base = info.Length() > 3 && !info[3].IsUndefined() && !info[3].IsNull()
+                                  ? std::optional<float>(info[3].As<Napi::Number>().FloatValue())
+                                  : std::nullopt;
+  double scale = info[4].As<Napi::Number>().DoubleValue();
+  int offset = info[5].As<Napi::Number>().Int32Value();
+  std::optional<mx::array> freqs = info.Length() > 6 && !info[6].IsUndefined() && !info[6].IsNull()
+                                       ? std::optional<mx::array>(NapiToArray(info[6]))
+                                       : std::nullopt;
+  mx::StreamOrDevice s = {};
+  try {
+    mx::array result = mx::fast::rope(x, dims, traditional, base, scale, offset, freqs, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
+}
+
+Napi::Value Wrap_scaled_dot_product_attention(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  mx::array queries = NapiToArray(info[0]);
+  mx::array keys = NapiToArray(info[1]);
+  mx::array values = NapiToArray(info[2]);
+  double scale = info[3].As<Napi::Number>().DoubleValue();
+  std::string mask_mode =
+      info.Length() > 4 && !info[4].IsUndefined() ? info[4].As<Napi::String>().Utf8Value() : "";
+  std::optional<mx::array> mask_arr =
+      info.Length() > 5 && !info[5].IsUndefined() && !info[5].IsNull()
+          ? std::optional<mx::array>(NapiToArray(info[5]))
+          : std::nullopt;
+  std::optional<mx::array> sinks = info.Length() > 6 && !info[6].IsUndefined() && !info[6].IsNull()
+                                       ? std::optional<mx::array>(NapiToArray(info[6]))
+                                       : std::nullopt;
+  mx::StreamOrDevice s = {};
+  try {
+    mx::array result = mx::fast::scaled_dot_product_attention(queries, keys, values, scale,
+                                                              mask_mode, mask_arr, sinks, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
+}
+
+// metal_kernel: Skipped (unsupported parameter types)
+// cuda_kernel: Skipped (unsupported parameter types)
+// precompiled_cuda_kernel: Skipped (unsupported parameter types)
+
 // ============================================================================
 // Module Initialization
 // ============================================================================
@@ -3944,6 +4031,11 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("categorical", Napi::Function::New(env, Wrap_categorical));
   exports.Set("laplace", Napi::Function::New(env, Wrap_laplace));
   exports.Set("permutation", Napi::Function::New(env, Wrap_permutation));
+  exports.Set("rms_norm", Napi::Function::New(env, Wrap_rms_norm));
+  exports.Set("layer_norm", Napi::Function::New(env, Wrap_layer_norm));
+  exports.Set("rope", Napi::Function::New(env, Wrap_rope));
+  exports.Set("scaled_dot_product_attention",
+              Napi::Function::New(env, Wrap_scaled_dot_product_attention));
 
   return exports;
 }

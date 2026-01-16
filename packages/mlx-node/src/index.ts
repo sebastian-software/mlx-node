@@ -490,50 +490,60 @@ export function slice_axis(
 /**
  * Fast, fused operations optimized for performance.
  * These mirror Python's mx.fast.* namespace.
- *
- * NOTE: These functions require the corresponding MLX fast operations to be
- * exposed in the native bindings. If they are undefined, the native bindings
- * need to be regenerated with fast operation support.
  */
 export const fast = {
   /**
    * Root Mean Square Layer Normalization.
-   * Returns undefined if not available in native bindings.
+   *
+   * @param x - Input array to normalize
+   * @param weight - Optional weight array for scaling (pass null for no weight)
+   * @param eps - Small epsilon for numerical stability
    */
-  rmsNorm: native.rms_norm as ((
+  rmsNorm: native.rms_norm as (
     x: unknown,
-    weight: unknown | undefined,
-    eps: number,
-    stream?: unknown
-  ) => unknown) | undefined,
+    weight: unknown | null,
+    eps: number
+  ) => unknown,
 
   /**
    * Rotary Position Embedding.
-   * Returns undefined if not available in native bindings.
+   *
+   * @param x - Input array of shape (batch, seq, dims)
+   * @param dims - Number of dimensions to apply RoPE to
+   * @param traditional - Use traditional RoPE formulation
+   * @param base - Base for computing frequencies (e.g., 10000.0)
+   * @param scale - Scale factor for positions
+   * @param offset - Position offset
+   * @param freqs - Optional precomputed frequencies
    */
-  rope: native.rope as ((
-    a: unknown,
+  rope: native.rope as (
+    x: unknown,
     dims: number,
     traditional: boolean,
-    base?: number,
-    scale?: number,
-    offset?: number | unknown,
-    freqs?: unknown,
-    stream?: unknown
-  ) => unknown) | undefined,
+    base: number | null,
+    scale: number,
+    offset: number,
+    freqs?: unknown
+  ) => unknown,
 
   /**
    * Scaled Dot-Product Attention.
-   * Returns undefined if not available in native bindings.
+   *
+   * @param q - Query array of shape (batch, seq, heads, dim)
+   * @param k - Key array of shape (batch, seq, heads, dim)
+   * @param v - Value array of shape (batch, seq, heads, dim)
+   * @param scale - Scale factor (typically 1/sqrt(dim))
+   * @param maskMode - Optional mask mode string
+   * @param mask - Optional mask array
    */
-  scaledDotProductAttention: native.scaled_dot_product_attention as ((
+  scaledDotProductAttention: native.scaled_dot_product_attention as (
     q: unknown,
     k: unknown,
     v: unknown,
     scale: number,
-    mask?: unknown,
-    stream?: unknown
-  ) => unknown) | undefined,
+    maskMode?: string,
+    mask?: unknown
+  ) => unknown,
 };
 
 // ============================================================================

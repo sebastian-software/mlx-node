@@ -98,6 +98,17 @@ return std::tuple<int, int, int>${def};
 ];
 
 // =============================================================================
+// Skip List - Functions with unsupported parameter types
+// =============================================================================
+
+const SKIP_FUNCTIONS = new Set([
+  // Kernel functions use std::vector<std::string>, std::vector<Shape>, etc.
+  'metal_kernel',
+  'cuda_kernel',
+  'precompiled_cuda_kernel',
+]);
+
+// =============================================================================
 // Generator Options
 // =============================================================================
 
@@ -214,6 +225,11 @@ export class CppNapiGenerator {
     const lines: string[] = [];
 
     for (const [name] of this.exports) {
+      // Skip functions with unsupported types
+      if (SKIP_FUNCTIONS.has(name)) {
+        lines.push(`// ${name}: Skipped (unsupported parameter types)`);
+        continue;
+      }
       const overloads = this.functions.get(name);
       if (!overloads?.length) {
         lines.push(`// ${name}: Not found in C++ headers`);
@@ -229,6 +245,10 @@ export class CppNapiGenerator {
   private generateExports(): string {
     const lines: string[] = [];
     for (const [name] of this.exports) {
+      // Skip functions with unsupported types
+      if (SKIP_FUNCTIONS.has(name)) {
+        continue;
+      }
       if (this.functions.has(name)) {
         lines.push(`exports.Set("${name}", Napi::Function::New(env, Wrap_${name}));`);
       }
@@ -363,6 +383,7 @@ export class CppNapiGenerator {
     if (fn.namespace.includes('linalg')) return 'mx::linalg::';
     if (fn.namespace.includes('fft')) return 'mx::fft::';
     if (fn.namespace.includes('random')) return 'mx::random::';
+    if (fn.namespace.includes('fast')) return 'mx::fast::';
     return 'mx::';
   }
 
