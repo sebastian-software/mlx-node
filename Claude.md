@@ -8,9 +8,7 @@ Node.js bindings for MLX, automatically generated from Python bindings.
 |-------|----------|
 | Project Overview | [README.md](README.md) |
 | Architecture Decisions | [docs/adr/](docs/adr/) |
-| Parser Details | [packages/parser/README.md](packages/parser/README.md) |
 | Code Generators | [packages/codegen/README.md](packages/codegen/README.md) |
-| CLI & Scripts | [packages/cli/README.md](packages/cli/README.md) |
 | Native Addon | [packages/mlx-node/README.md](packages/mlx-node/README.md) |
 
 ## Language
@@ -34,10 +32,10 @@ Node.js bindings for MLX, automatically generated from Python bindings.
 
 ```typescript
 // Correct
-import { NanobindRegexParser } from '@mlx-node/parser';
+import { NanobindRegexParser } from '@mlx-node/codegen';
 
 // Wrong
-import { NanobindRegexParser } from '../parser/src';
+import { NanobindRegexParser } from '../codegen/src';
 ```
 
 ### File Naming
@@ -48,23 +46,9 @@ import { NanobindRegexParser } from '../parser/src';
 
 ### Exports
 
-Each package has a `src/index.ts` that exports all public APIs:
-
-```typescript
-// packages/parser/src/index.ts
-export { NanobindRegexParser } from './regex-parser.js';
-export type { Binding, Function, Class } from './types.js';
-```
+Each package has a `src/index.ts` that exports all public APIs.
 
 ## Quality Guidelines
-
-### Coverage Requirement
-
-**100% parser coverage is mandatory.** Every nanobind pattern in MLX must be recognized.
-
-```bash
-pnpm check-coverage  # Must pass without errors
-```
 
 ### Tests
 
@@ -74,22 +58,20 @@ pnpm check-coverage  # Must pass without errors
 
 ```bash
 pnpm test                              # All tests
-pnpm --filter @mlx-node/parser test    # Parser only
+pnpm --filter @mlx-node/codegen test   # Codegen only
+pnpm --filter mlx-node test            # Native only
 ```
 
 ### Before Committing
 
 1. `pnpm build` - TypeScript compiles without errors
 2. `pnpm test` - All tests pass
-3. `pnpm check-coverage` - 100% coverage
-4. `pnpm generate` - If parser/codegen was modified
+3. `pnpm generate` - If parser/codegen was modified
 
 ## Dependency Rules
 
 ```
-@mlx-node/parser     → no internal dependencies
-@mlx-node/codegen    → may only import parser
-@mlx-node/cli        → may import parser + codegen
+@mlx-node/codegen    → no internal dependencies
 mlx-node             → no runtime dependencies on other packages
 ```
 
@@ -111,9 +93,9 @@ If changes are needed: Modify parser or codegen and run `pnpm generate`.
 
 When new MLX patterns are not recognized:
 
-1. Add pattern to `packages/parser/src/regex-parser.ts`
-2. Add test in `packages/parser/test/`
-3. Verify with `pnpm check-coverage`
+1. Add pattern to `packages/codegen/src/regex-parser.ts`
+2. Add test in `packages/codegen/test/`
+3. Verify with `pnpm test`
 
 ### Build Errors
 
@@ -141,7 +123,7 @@ If MLX is not found: Set `MLX_DIR` environment variable.
 [optional body]
 
 Types: feat, fix, refactor, docs, test, chore
-Scopes: parser, codegen, cli, mlx-node, root
+Scopes: codegen, mlx-node, root
 ```
 
 **Commit early and often:**
@@ -152,9 +134,9 @@ Scopes: parser, codegen, cli, mlx-node, root
 - Group related changes together, separate unrelated ones
 
 **Good commits:**
-- `docs(parser): add README with pattern reference`
 - `feat(codegen): add type mapping for complex numbers`
-- `fix(cli): handle missing MLX source directory`
+- `fix(codegen): handle missing MLX source directory`
+- `test(mlx-node): add matmul integration test`
 
 **Bad commits:**
 - `update files` (too vague)
@@ -165,8 +147,8 @@ Scopes: parser, codegen, cli, mlx-node, root
 
 ```
 feat/add-xyz
-fix/parser-issue
-refactor/codegen-cleanup
+fix/codegen-issue
+refactor/mlx-node-cleanup
 ```
 
 ### PR Descriptions

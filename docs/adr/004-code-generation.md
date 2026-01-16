@@ -34,9 +34,8 @@ packages/mlx-node/generated/
 ## Generation Pipeline
 
 ```
-MLX Source (.cpp)
-    → @mlx-node/parser (extract bindings)
-    → @mlx-node/codegen (transform to output)
+MLX Source (.cpp, .h)
+    → @mlx-node/codegen (parse + transform)
     → generated/ files
 ```
 

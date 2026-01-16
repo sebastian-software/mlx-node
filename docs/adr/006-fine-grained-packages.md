@@ -1,105 +1,76 @@
-# ADR-006: Fine-Grained Package Structure
+# ADR-006: Package Structure
 
 ## Status
-Accepted
+Accepted (Revised)
 
 ## Context
-Given the monorepo decision, we needed to decide on package granularity:
+Given the monorepo decision, we needed to decide on package granularity.
 
-1. **Coarse** - 2 packages: tooling + runtime
-2. **Fine-Grained** - 4 packages: parser, codegen, cli, runtime
-3. **Very Fine** - Many small packages (one per generator, etc.)
+Initial plan was 4 packages (parser, codegen, cli, runtime), but this proved over-engineered. Parser and codegen are tightly coupled, and a separate CLI package added no value.
 
 ## Decision
-Use fine-grained structure with 4 packages.
+Use a simplified structure with 2 core packages + optional high-level packages.
 
 ## Package Structure
 
 ```
 packages/
-├── parser/          # @mlx-node/parser
-│   ├── src/
-│   │   ├── index.ts
-│   │   └── regex-parser.ts
-│   ├── test/
-│   └── package.json
-│
 ├── codegen/         # @mlx-node/codegen
 │   ├── src/
 │   │   ├── index.ts
+│   │   ├── regex-parser.ts      # Parser integrated here
 │   │   ├── type-mapper.ts
 │   │   ├── ts-generator.ts
-│   │   └── napi-generator.ts
+│   │   └── cpp-napi-generator.ts
+│   ├── test/
 │   └── package.json
 │
-├── cli/             # @mlx-node/cli
+├── mlx-node/        # mlx-node (published to npm)
 │   ├── src/
-│   │   ├── index.ts
-│   │   └── generate.ts
-│   ├── bin/
-│   │   └── mlx-generate.js
-│   ├── scripts/
-│   │   ├── check-coverage.js
-│   │   └── validate-completeness.py
+│   ├── generated/   # Output from codegen
+│   ├── test/
+│   ├── CMakeLists.txt
 │   └── package.json
 │
-└── mlx-node/        # mlx-node (published to npm)
-    ├── src/native/
-    │   └── stub.cpp
-    ├── lib/
-    │   ├── index.js
-    │   └── index.d.ts
-    ├── generated/   # Output from CLI
-    ├── test/
-    ├── CMakeLists.txt
+└── llm/             # @mlx-node/llm (optional, WIP)
+    ├── src/
     └── package.json
 ```
 
 ## Dependency Graph
 
 ```
-@mlx-node/parser (no dependencies)
-       ↓
-@mlx-node/codegen (depends on parser)
-       ↓
-@mlx-node/cli (depends on parser + codegen)
+@mlx-node/codegen (no dependencies)
        ↓ (generates files for)
-mlx-node (consumes generated/, no runtime dependencies)
+mlx-node (consumes generated/, no runtime dependencies on codegen)
+       ↓ (used by)
+@mlx-node/llm (depends on mlx-node at runtime)
 ```
 
 ## Rationale
 
-### Single Responsibility
-Each package has one clear purpose:
-- **parser**: Parse nanobind C++ → binding metadata
-- **codegen**: Transform metadata → code files
-- **cli**: Orchestrate generation + provide scripts
-- **mlx-node**: Native addon + JavaScript API
+### Simplified Structure
+- **codegen**: Parser + code generation in one package (they always change together)
+- **mlx-node**: Native addon + JavaScript API (the published package)
+- **llm**: Optional high-level package for LLM inference
 
-### Reusability
-- Parser could be used by other projects needing nanobind parsing
-- Codegen could generate bindings for other runtimes (Deno, Bun)
+### Why Not Separate Parser?
+Parser and codegen are tightly coupled:
+- Parser output format is dictated by codegen needs
+- Changes to one almost always require changes to the other
+- No external consumers need the parser standalone
 
-### Testability
-- Each package can be tested in isolation
-- Parser tests don't need codegen
-- Codegen tests don't need native compilation
-
-### Future Extensibility
-Easy to add new packages:
-- `@mlx-node/nn` - Neural network layers
-- `@mlx-node/optimizers` - Optimizer implementations
-- `@mlx-node/data` - Data loading utilities
+### Why No CLI Package?
+- Generation is triggered via `pnpm generate` in the monorepo
+- No need for a standalone CLI tool
+- Scripts live in root `scripts/` directory
 
 ## Consequences
 
 ### Positive
-- Clear boundaries between components
-- Parser can be versioned independently
-- CLI scripts don't ship with runtime
-- Smaller published package size
+- Fewer packages to maintain
+- Simpler dependency management
+- Parser/codegen changes are atomic
 
 ### Negative
-- More packages to maintain
-- Cross-package changes require coordination
-- More complex dependency management
+- Parser cannot be reused independently (acceptable trade-off)

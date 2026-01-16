@@ -17,7 +17,6 @@ An ADR is a document that captures an important architectural decision made alon
 | [ADR-005](005-pnpm-turborepo-monorepo.md) | Monorepo with pnpm and Turborepo | Accepted |
 | [ADR-006](006-fine-grained-packages.md) | Fine-Grained Package Structure | Accepted |
 | [ADR-007](007-stub-mode.md) | Stub Mode for Development Without MLX | Accepted |
-| [ADR-008](008-coverage-validation.md) | Coverage Validation as Quality Gate | Accepted |
 | [ADR-009](009-cpp-header-based-generation.md) | C++ Header-Based Generation | Accepted |
 
 ## Template

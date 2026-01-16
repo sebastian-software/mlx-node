@@ -174,7 +174,7 @@ The generator produces bindings for **200+ functions** from MLX:
 | Hash-based freshness check | Complete |
 | Build system (CMake) | Complete |
 | Monorepo (pnpm/turbo) | Complete |
-| Test suite | 13 tests passing |
+| Test suite | 69 tests passing |
 | LLM inference | In Progress |
 
 ## Documentation
