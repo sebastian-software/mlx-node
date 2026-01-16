@@ -2170,9 +2170,10 @@ Napi::Value Wrap_split(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   int num_splits = info[1].As<Napi::Number>().Int32Value();
+  int axis = info.Length() > 2 && !info[2].IsUndefined() ? info[2].As<Napi::Number>().Int32Value() : 0;
   mx::StreamOrDevice s = {};
   try {
-    std::vector<mx::array> result = mx::split(a, num_splits, s);
+    std::vector<mx::array> result = mx::split(a, num_splits, axis, s);
     return VecArrayToNapi(env, result);
   } catch (const std::exception& e) {
     throw Napi::Error::New(env, e.what());
@@ -2308,9 +2309,10 @@ Napi::Value Wrap_softmax(const Napi::CallbackInfo& info) {
 Napi::Value Wrap_concatenate(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   std::vector<mx::array> arrays = NapiToVecArray(info[0]);
+  int axis = info.Length() > 1 && !info[1].IsUndefined() ? info[1].As<Napi::Number>().Int32Value() : 0;
   mx::StreamOrDevice s = {};
   try {
-    mx::array result = mx::concatenate(arrays, s);
+    mx::array result = mx::concatenate(arrays, axis, s);
     return ArrayToNapi(env, result);
   } catch (const std::exception& e) {
     throw Napi::Error::New(env, e.what());
@@ -2321,9 +2323,10 @@ Napi::Value Wrap_concatenate(const Napi::CallbackInfo& info) {
 Napi::Value Wrap_stack(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   std::vector<mx::array> arrays = NapiToVecArray(info[0]);
+  int axis = info.Length() > 1 && !info[1].IsUndefined() ? info[1].As<Napi::Number>().Int32Value() : 0;
   mx::StreamOrDevice s = {};
   try {
-    mx::array result = mx::stack(arrays, s);
+    mx::array result = mx::stack(arrays, axis, s);
     return ArrayToNapi(env, result);
   } catch (const std::exception& e) {
     throw Napi::Error::New(env, e.what());
