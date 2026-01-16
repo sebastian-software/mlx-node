@@ -73,5 +73,252 @@ export const {
 export { native as core };
 export const array = MLXArray;
 
+// ============================================================================
+// Mathematical Constants
+// ============================================================================
+
+/** Euler's number (base of natural logarithm) */
+export const e = Math.E;
+
+/** Ratio of circle's circumference to its diameter */
+export const pi = Math.PI;
+
+/** Euler-Mascheroni constant (γ ≈ 0.5772) */
+export const euler_gamma = 0.5772156649015329;
+
+/** Positive infinity */
+export const inf = Infinity;
+
+/** Not a Number */
+export const nan = NaN;
+
+/** Used for array indexing to add a new axis (like numpy.newaxis) */
+export const newaxis = null;
+
+// ============================================================================
+// Utility Functions
+// ============================================================================
+
+/**
+ * Broadcast shapes together.
+ *
+ * Returns the shape that results from broadcasting the supplied array shapes
+ * against each other.
+ *
+ * @param shapes - The shapes to broadcast together
+ * @returns The broadcasted shape
+ * @throws Error if the shapes cannot be broadcast together
+ *
+ * @example
+ * broadcast_shapes([1, 2, 3], [3]) // [1, 2, 3]
+ * broadcast_shapes([4, 1, 6], [5, 6]) // [4, 5, 6]
+ * broadcast_shapes([5, 1, 4], [1, 3, 4]) // [5, 3, 4]
+ */
+export function broadcast_shapes(...shapes: number[][]): number[] {
+  if (shapes.length === 0) {
+    throw new Error('[broadcast_shapes] Must provide at least one shape.');
+  }
+
+  let result = [...shapes[0]];
+
+  for (let i = 1; i < shapes.length; i++) {
+    const shape = shapes[i];
+    const resultLen = result.length;
+    const shapeLen = shape.length;
+    const maxLen = Math.max(resultLen, shapeLen);
+
+    const newResult: number[] = new Array(maxLen);
+
+    for (let j = 0; j < maxLen; j++) {
+      const resultIdx = resultLen - maxLen + j;
+      const shapeIdx = shapeLen - maxLen + j;
+
+      const resultDim = resultIdx >= 0 ? result[resultIdx] : 1;
+      const shapeDim = shapeIdx >= 0 ? shape[shapeIdx] : 1;
+
+      if (resultDim === shapeDim) {
+        newResult[j] = resultDim;
+      } else if (resultDim === 1) {
+        newResult[j] = shapeDim;
+      } else if (shapeDim === 1) {
+        newResult[j] = resultDim;
+      } else {
+        throw new Error(
+          `[broadcast_shapes] Shapes cannot be broadcast together: ` +
+          `[${result.join(', ')}] and [${shape.join(', ')}]`
+        );
+      }
+    }
+
+    result = newResult;
+  }
+
+  return result;
+}
+
+// ============================================================================
+// Dtype Info Functions (finfo and iinfo)
+// ============================================================================
+
+interface FloatInfo {
+  dtype: string;
+  min: number;
+  max: number;
+  eps: number;
+}
+
+interface IntInfo {
+  dtype: string;
+  min: number | bigint;
+  max: number | bigint;
+}
+
+const floatInfoMap: Record<string, FloatInfo> = {
+  float16: {
+    dtype: 'float16',
+    min: -65504,
+    max: 65504,
+    eps: 0.00097656,
+  },
+  float32: {
+    dtype: 'float32',
+    min: -3.4028235e+38,
+    max: 3.4028235e+38,
+    eps: 1.1920929e-7,
+  },
+  float64: {
+    dtype: 'float64',
+    min: -1.7976931348623157e+308,
+    max: 1.7976931348623157e+308,
+    eps: 2.220446049250313e-16,
+  },
+  bfloat16: {
+    dtype: 'bfloat16',
+    min: -3.38953e+38,
+    max: 3.38953e+38,
+    eps: 0.0078125,
+  },
+};
+
+const intInfoMap: Record<string, IntInfo> = {
+  int8: {
+    dtype: 'int8',
+    min: -128,
+    max: 127,
+  },
+  int16: {
+    dtype: 'int16',
+    min: -32768,
+    max: 32767,
+  },
+  int32: {
+    dtype: 'int32',
+    min: -2147483648,
+    max: 2147483647,
+  },
+  int64: {
+    dtype: 'int64',
+    min: BigInt('-9223372036854775808'),
+    max: BigInt('9223372036854775807'),
+  },
+  uint8: {
+    dtype: 'uint8',
+    min: 0,
+    max: 255,
+  },
+  uint16: {
+    dtype: 'uint16',
+    min: 0,
+    max: 65535,
+  },
+  uint32: {
+    dtype: 'uint32',
+    min: 0,
+    max: 4294967295,
+  },
+  uint64: {
+    dtype: 'uint64',
+    min: BigInt(0),
+    max: BigInt('18446744073709551615'),
+  },
+};
+
+/**
+ * Get machine limits for floating point types.
+ *
+ * @param dtype - The floating point dtype name ('float16', 'float32', 'float64', 'bfloat16')
+ * @returns An object with dtype, min, max, and eps properties
+ * @throws Error if dtype is not a floating point type
+ *
+ * @example
+ * finfo('float32').eps // 1.1920929e-7
+ * finfo('float16').max // 65504
+ */
+export function finfo(dtype: string): FloatInfo {
+  const info = floatInfoMap[dtype];
+  if (!info) {
+    throw new Error(`[finfo] dtype '${dtype}' is not a floating point type. ` +
+      `Supported types: ${Object.keys(floatInfoMap).join(', ')}`);
+  }
+  return info;
+}
+
+/**
+ * Get machine limits for integer types.
+ *
+ * @param dtype - The integer dtype name ('int8', 'int16', 'int32', 'int64', 'uint8', 'uint16', 'uint32', 'uint64')
+ * @returns An object with dtype, min, and max properties
+ * @throws Error if dtype is not an integer type
+ *
+ * @example
+ * iinfo('int32').max // 2147483647
+ * iinfo('uint8').max // 255
+ */
+export function iinfo(dtype: string): IntInfo {
+  const info = intInfoMap[dtype];
+  if (!info) {
+    throw new Error(`[iinfo] dtype '${dtype}' is not an integer type. ` +
+      `Supported types: ${Object.keys(intInfoMap).join(', ')}`);
+  }
+  return info;
+}
+
+// ============================================================================
+// Random Namespace (for Python-compatible mx.random.* API)
+// ============================================================================
+
+/**
+ * Random number generation functions.
+ * These mirror Python's mx.random.* namespace.
+ */
+export const random = {
+  seed: native.seed as (seed: number) => void,
+  key: native.key as (seed: number) => unknown,
+  uniform: native.uniform as (...args: unknown[]) => unknown,
+  normal: native.normal as (...args: unknown[]) => unknown,
+  multivariate_normal: native.multivariate_normal as (...args: unknown[]) => unknown,
+  randint: native.randint as (...args: unknown[]) => unknown,
+  bernoulli: native.bernoulli as (...args: unknown[]) => unknown,
+  truncated_normal: native.truncated_normal as (...args: unknown[]) => unknown,
+  gumbel: native.gumbel as (...args: unknown[]) => unknown,
+  categorical: native.categorical as (...args: unknown[]) => unknown,
+  laplace: native.laplace as (...args: unknown[]) => unknown,
+  permutation: native.permutation as (...args: unknown[]) => unknown,
+};
+
+// Add constants and utilities to the native module object for mx.e, mx.pi, etc.
+Object.assign(native, {
+  e,
+  pi,
+  euler_gamma,
+  inf,
+  nan,
+  newaxis,
+  broadcast_shapes,
+  finfo,
+  iinfo,
+  random,
+});
+
 // Default export with everything
 export default native;

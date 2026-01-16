@@ -271,8 +271,12 @@ export class CppNapiGenerator {
     const ns = this.getNamespace(fn);
     const call = `${ns}${fn.name}(${args})`;
 
-    // Return based on type
+    // Wrap in try/catch to convert C++ exceptions to JS errors
+    lines.push('try {');
     lines.push(this.generateReturn(fn.returnType, call));
+    lines.push('} catch (const std::exception& e) {');
+    lines.push('  throw Napi::Error::New(env, e.what());');
+    lines.push('}');
 
     return lines.join('\n');
   }

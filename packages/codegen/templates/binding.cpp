@@ -78,12 +78,16 @@ Napi::Object MLXArray::Init(Napi::Env env, Napi::Object exports) {
 
 MLXArray::MLXArray(const Napi::CallbackInfo& info)
     : Napi::ObjectWrap<MLXArray>(info), array_(mx::array({}, mx::float32)) {
-  if (info.Length() > 0 && !info[0].IsUndefined()) {
-    array_ = NapiToArray(info[0]);
-    if (info.Length() > 1 && !info[1].IsUndefined()) {
-      mx::Dtype dtype = NapiToDtype(info[1]);
-      array_ = mx::astype(array_, dtype);
+  try {
+    if (info.Length() > 0 && !info[0].IsUndefined()) {
+      array_ = NapiToArray(info[0]);
+      if (info.Length() > 1 && !info[1].IsUndefined()) {
+        mx::Dtype dtype = NapiToDtype(info[1]);
+        array_ = mx::astype(array_, dtype);
+      }
     }
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(info.Env(), e.what());
   }
 }
 
@@ -149,98 +153,114 @@ Napi::Value MLXArray::GetNbytes(const Napi::CallbackInfo& info) {
 
 Napi::Value MLXArray::ToList(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  mx::eval(array_);
+  try {
+    mx::eval(array_);
 
-  size_t size = array_.size();
-  Napi::Array result = Napi::Array::New(env, size);
+    size_t size = array_.size();
+    Napi::Array result = Napi::Array::New(env, size);
 
-  mx::Dtype dtype = array_.dtype();
-  if (dtype == mx::float32) {
-    const float* data = array_.data<float>();
-    for (size_t i = 0; i < size; i++) {
-      result.Set(i, Napi::Number::New(env, data[i]));
+    mx::Dtype dtype = array_.dtype();
+    if (dtype == mx::float32) {
+      const float* data = array_.data<float>();
+      for (size_t i = 0; i < size; i++) {
+        result.Set(i, Napi::Number::New(env, data[i]));
+      }
+    } else if (dtype == mx::float64) {
+      const double* data = array_.data<double>();
+      for (size_t i = 0; i < size; i++) {
+        result.Set(i, Napi::Number::New(env, data[i]));
+      }
+    } else if (dtype == mx::int32) {
+      const int32_t* data = array_.data<int32_t>();
+      for (size_t i = 0; i < size; i++) {
+        result.Set(i, Napi::Number::New(env, data[i]));
+      }
+    } else if (dtype == mx::int64) {
+      const int64_t* data = array_.data<int64_t>();
+      for (size_t i = 0; i < size; i++) {
+        result.Set(i, Napi::Number::New(env, static_cast<double>(data[i])));
+      }
+    } else if (dtype == mx::uint32) {
+      const uint32_t* data = array_.data<uint32_t>();
+      for (size_t i = 0; i < size; i++) {
+        result.Set(i, Napi::Number::New(env, data[i]));
+      }
+    } else if (dtype == mx::bool_) {
+      const bool* data = array_.data<bool>();
+      for (size_t i = 0; i < size; i++) {
+        result.Set(i, Napi::Boolean::New(env, data[i]));
+      }
+    } else {
+      // Fallback: convert to float32 first
+      mx::array converted = mx::astype(array_, mx::float32);
+      mx::eval(converted);
+      const float* data = converted.data<float>();
+      for (size_t i = 0; i < size; i++) {
+        result.Set(i, Napi::Number::New(env, data[i]));
+      }
     }
-  } else if (dtype == mx::float64) {
-    const double* data = array_.data<double>();
-    for (size_t i = 0; i < size; i++) {
-      result.Set(i, Napi::Number::New(env, data[i]));
-    }
-  } else if (dtype == mx::int32) {
-    const int32_t* data = array_.data<int32_t>();
-    for (size_t i = 0; i < size; i++) {
-      result.Set(i, Napi::Number::New(env, data[i]));
-    }
-  } else if (dtype == mx::int64) {
-    const int64_t* data = array_.data<int64_t>();
-    for (size_t i = 0; i < size; i++) {
-      result.Set(i, Napi::Number::New(env, static_cast<double>(data[i])));
-    }
-  } else if (dtype == mx::uint32) {
-    const uint32_t* data = array_.data<uint32_t>();
-    for (size_t i = 0; i < size; i++) {
-      result.Set(i, Napi::Number::New(env, data[i]));
-    }
-  } else if (dtype == mx::bool_) {
-    const bool* data = array_.data<bool>();
-    for (size_t i = 0; i < size; i++) {
-      result.Set(i, Napi::Boolean::New(env, data[i]));
-    }
-  } else {
-    // Fallback: convert to float32 first
-    mx::array converted = mx::astype(array_, mx::float32);
-    mx::eval(converted);
-    const float* data = converted.data<float>();
-    for (size_t i = 0; i < size; i++) {
-      result.Set(i, Napi::Number::New(env, data[i]));
-    }
+
+    return result;
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
   }
-
-  return result;
 }
 
 Napi::Value MLXArray::Item(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  mx::eval(array_);
+  try {
+    mx::eval(array_);
 
-  if (array_.size() != 1) {
-    throw Napi::Error::New(env, "item() only works for arrays with exactly one element");
+    if (array_.size() != 1) {
+      throw Napi::Error::New(env, "item() only works for arrays with exactly one element");
+    }
+
+    mx::Dtype dtype = array_.dtype();
+    if (dtype == mx::float32) {
+      return Napi::Number::New(env, array_.data<float>()[0]);
+    } else if (dtype == mx::float64) {
+      return Napi::Number::New(env, array_.data<double>()[0]);
+    } else if (dtype == mx::int32) {
+      return Napi::Number::New(env, array_.data<int32_t>()[0]);
+    } else if (dtype == mx::bool_) {
+      return Napi::Boolean::New(env, array_.data<bool>()[0]);
+    }
+
+    // Fallback
+    mx::array converted = mx::astype(array_, mx::float32);
+    mx::eval(converted);
+    return Napi::Number::New(env, converted.data<float>()[0]);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
   }
-
-  mx::Dtype dtype = array_.dtype();
-  if (dtype == mx::float32) {
-    return Napi::Number::New(env, array_.data<float>()[0]);
-  } else if (dtype == mx::float64) {
-    return Napi::Number::New(env, array_.data<double>()[0]);
-  } else if (dtype == mx::int32) {
-    return Napi::Number::New(env, array_.data<int32_t>()[0]);
-  } else if (dtype == mx::bool_) {
-    return Napi::Boolean::New(env, array_.data<bool>()[0]);
-  }
-
-  // Fallback
-  mx::array converted = mx::astype(array_, mx::float32);
-  mx::eval(converted);
-  return Napi::Number::New(env, converted.data<float>()[0]);
 }
 
 Napi::Value MLXArray::Reshape(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  if (info.Length() < 1) {
-    throw Napi::TypeError::New(env, "reshape requires shape argument");
+  try {
+    if (info.Length() < 1) {
+      throw Napi::TypeError::New(env, "reshape requires shape argument");
+    }
+    mx::Shape shape = NapiToShape(info[0]);
+    mx::array result = mx::reshape(array_, shape);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
   }
-  mx::Shape shape = NapiToShape(info[0]);
-  mx::array result = mx::reshape(array_, shape);
-  return ArrayToNapi(env, result);
 }
 
 Napi::Value MLXArray::Astype(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  if (info.Length() < 1) {
-    throw Napi::TypeError::New(env, "astype requires dtype argument");
+  try {
+    if (info.Length() < 1) {
+      throw Napi::TypeError::New(env, "astype requires dtype argument");
+    }
+    mx::Dtype dtype = NapiToDtype(info[0]);
+    mx::array result = mx::astype(array_, dtype);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
   }
-  mx::Dtype dtype = NapiToDtype(info[0]);
-  mx::array result = mx::astype(array_, dtype);
-  return ArrayToNapi(env, result);
 }
 
 // ============================================================================

@@ -7,6 +7,167 @@
 import { expect } from 'vitest';
 
 /**
+ * Python-style assertEqual for arrays.
+ *
+ * In Python, assertEqual on MLX arrays compares element-wise.
+ * This function replicates that behavior for use in tests.
+ *
+ * @param mx - The MLX module
+ * @param actual - The actual value
+ * @param expected - The expected value
+ *
+ * @example
+ * pyAssertEqual(mx, new mx.array([1,2,3]), new mx.array([1,2,3])) // passes
+ */
+export function pyAssertEqual(mx: any, actual: any, expected: any): void {
+  const actualIsArray = isMLXArrayCheck(actual);
+  const expectedIsArray = isMLXArrayCheck(expected);
+
+  // Both are MLX arrays - use array_equal
+  if (actualIsArray && expectedIsArray) {
+    const equal = mx.array_equal(actual, expected).item();
+    expect(equal).toBe(true);
+    return;
+  }
+
+  // One is array, one is scalar - convert and compare
+  if (actualIsArray || expectedIsArray) {
+    const equal = mx.array_equal(
+      actualIsArray ? actual : new mx.array(actual),
+      expectedIsArray ? expected : new mx.array(expected)
+    ).item();
+    expect(equal).toBe(true);
+    return;
+  }
+
+  // Neither is array - use regular equality
+  expect(actual).toEqual(expected);
+}
+
+/**
+ * Check if value is an MLX array (internal helper to avoid name collision)
+ */
+function isMLXArrayCheck(value: unknown): boolean {
+  return value !== null &&
+    typeof value === 'object' &&
+    'shape' in value &&
+    'dtype' in value;
+}
+
+/**
+ * Python-style isnan that works on both scalars and arrays.
+ *
+ * For scalars: uses Number.isNaN()
+ * For arrays: uses mx.isnan().item() for single element, or returns array
+ *
+ * @param mx - The MLX module
+ * @param value - Value to check
+ * @returns boolean for scalars, MLX array for arrays
+ */
+export function pyIsNaN(mx: any, value: unknown): boolean | any {
+  if (isMLXArrayCheck(value)) {
+    const result = mx.isnan(value);
+    // If result is a single-element array, return the scalar
+    const shape = result.shape;
+    if (shape.length === 0 || (shape.length === 1 && shape[0] === 1)) {
+      return result.item();
+    }
+    return result;
+  }
+  return Number.isNaN(value);
+}
+
+/**
+ * Python-style isinf that works on both scalars and arrays.
+ */
+export function pyIsInf(mx: any, value: unknown): boolean | any {
+  if (isMLXArrayCheck(value)) {
+    const result = mx.isinf(value);
+    const shape = result.shape;
+    if (shape.length === 0 || (shape.length === 1 && shape[0] === 1)) {
+      return result.item();
+    }
+    return result;
+  }
+  return !Number.isFinite(value) && !Number.isNaN(value);
+}
+
+/**
+ * Python-style bool() conversion for arrays.
+ *
+ * In Python, bool(array) returns True if the single element is truthy.
+ * Raises error for multi-element arrays.
+ */
+export function pyBool(mx: any, value: unknown): boolean {
+  if (isMLXArrayCheck(value)) {
+    const arr = value as any;
+    const size = arr.shape.reduce((a: number, b: number) => a * b, 1);
+    if (size !== 1) {
+      throw new Error('The truth value of an array with more than one element is ambiguous');
+    }
+    return Boolean(arr.item());
+  }
+  return Boolean(value);
+}
+
+/**
+ * Python-style len() for arrays.
+ *
+ * Returns the length of the first dimension.
+ */
+export function pyLen(value: unknown): number {
+  if (isMLXArrayCheck(value)) {
+    const arr = value as any;
+    if (arr.shape.length === 0) {
+      throw new Error('len() of unsized object');
+    }
+    return arr.shape[0];
+  }
+  if (Array.isArray(value) || typeof value === 'string') {
+    return value.length;
+  }
+  throw new Error('object has no len()');
+}
+
+/**
+ * Python-style iteration over arrays.
+ *
+ * Yields slices along the first axis.
+ */
+export function* pyIter(mx: any, value: unknown): Generator<any> {
+  if (isMLXArrayCheck(value)) {
+    const arr = value as any;
+    const len = arr.shape[0] || 0;
+    for (let i = 0; i < len; i++) {
+      const slice = mx.take(arr, new mx.array([i], 'int32'), 0);
+      yield mx.squeeze(slice, 0);
+    }
+  } else if (Array.isArray(value)) {
+    yield* value;
+  } else {
+    throw new Error('object is not iterable');
+  }
+}
+
+/**
+ * Python-style enumerate() function.
+ *
+ * Returns an iterator of [index, element] tuples over an iterable,
+ * including MLX arrays.
+ *
+ * @param mx - The MLX module
+ * @param value - The iterable to enumerate (array or MLX array)
+ * @returns Generator yielding [index, element] pairs
+ */
+export function* pyEnumerate(mx: any, value: unknown): Generator<[number, any]> {
+  let i = 0;
+  for (const item of pyIter(mx, value)) {
+    yield [i, item];
+    i++;
+  }
+}
+
+/**
  * Check if two arrays are element-wise equal within a tolerance.
  * Similar to np.allclose()
  */
@@ -70,6 +231,97 @@ export function shapeEqual(
 }
 
 /**
+ * Python-style equality comparison.
+ *
+ * In Python, comparing an MLX array to a list/tuple using == returns False
+ * because they are different types. This function replicates that behavior.
+ *
+ * Behavior:
+ * - Array to Array: Returns MLX array (element-wise comparison via mx.equal)
+ * - Array to scalar (number): Returns MLX array (broadcasting via mx.equal)
+ * - Array to JS array/list: Returns false (type mismatch, Python semantics)
+ * - Other cases: JavaScript equality
+ *
+ * @param mx - The MLX module
+ * @param a - First value to compare
+ * @param b - Second value to compare
+ * @returns For array comparisons: MLX array of booleans. Otherwise: boolean.
+ *
+ * @example
+ * pyCompare(mx, mx.array([1,2,3]), [1,2,3]) // false (different types)
+ * pyCompare(mx, mx.array([1,2,3]), mx.array([1,2,3])) // MLX array [true, true, true]
+ * pyCompare(mx, mx.array([1,2,3]), 1) // MLX array [true, false, false]
+ */
+export function pyCompare(mx: any, a: unknown, b: unknown): any {
+  const aIsArray = isMLXArrayCheck(a);
+  const bIsArray = isMLXArrayCheck(b);
+  const aIsJSArray = Array.isArray(a);
+  const bIsJSArray = Array.isArray(b);
+
+  // If one is an MLX array and the other is a JS array, return false (type mismatch)
+  if ((aIsArray && bIsJSArray) || (bIsArray && aIsJSArray)) {
+    return false;
+  }
+
+  // If at least one is an MLX array (and the other is not a JS array), use mx.equal
+  // This handles array-to-array and array-to-scalar (broadcasting)
+  if (aIsArray || bIsArray) {
+    return mx.equal(a, b);
+  }
+
+  // For JS arrays
+  if (aIsJSArray && bIsJSArray) {
+    if ((a as unknown[]).length !== (b as unknown[]).length) return false;
+    return (a as unknown[]).every((val, i) => val === (b as unknown[])[i]);
+  }
+
+  return a === b;
+}
+
+/**
+ * Python-style inequality comparison.
+ *
+ * In Python, comparing an MLX array to a list/tuple using != returns True
+ * because they are different types. This function replicates that behavior.
+ *
+ * Behavior:
+ * - Array to Array: Returns MLX array (element-wise comparison via mx.not_equal)
+ * - Array to scalar (number): Returns MLX array (broadcasting via mx.not_equal)
+ * - Array to JS array/list: Returns true (type mismatch, Python semantics)
+ * - Other cases: JavaScript inequality
+ *
+ * @param mx - The MLX module
+ * @param a - First value to compare
+ * @param b - Second value to compare
+ * @returns For array comparisons: MLX array of booleans. Otherwise: boolean.
+ */
+export function pyNotEqual(mx: any, a: unknown, b: unknown): any {
+  const aIsArray = isMLXArrayCheck(a);
+  const bIsArray = isMLXArrayCheck(b);
+  const aIsJSArray = Array.isArray(a);
+  const bIsJSArray = Array.isArray(b);
+
+  // If one is an MLX array and the other is a JS array, return true (type mismatch)
+  if ((aIsArray && bIsJSArray) || (bIsArray && aIsJSArray)) {
+    return true;
+  }
+
+  // If at least one is an MLX array (and the other is not a JS array), use mx.not_equal
+  // This handles array-to-array and array-to-scalar (broadcasting)
+  if (aIsArray || bIsArray) {
+    return mx.not_equal(a, b);
+  }
+
+  // For JS arrays
+  if (aIsJSArray && bIsJSArray) {
+    if ((a as unknown[]).length !== (b as unknown[]).length) return true;
+    return !(a as unknown[]).every((val, i) => val === (b as unknown[])[i]);
+  }
+
+  return a !== b;
+}
+
+/**
  * Parsed slice component
  */
 interface SliceSpec {
@@ -91,7 +343,7 @@ function parseSliceComponent(s: string): SliceSpec {
     return { type: 'ellipsis' };
   }
 
-  if (s === 'None' || s === 'null') {
+  if (s === 'None' || s === 'null' || s === 'mx.newaxis') {
     return { type: 'newaxis' };
   }
 
@@ -158,6 +410,41 @@ function parseSliceExpr(expr: string): SliceSpec[] {
  * pySlice(mx, a, '::2')
  */
 export function pySlice(mx: any, a: any, sliceExpr: string): any {
+  // Handle plain JavaScript arrays/strings by using native slice
+  if (Array.isArray(a) || typeof a === 'string') {
+    const specs = parseSliceExpr(sliceExpr);
+    if (specs.length === 1 && specs[0].type === 'slice') {
+      const spec = specs[0];
+      const len = a.length;
+      let start = spec.start ?? 0;
+      let stop = spec.stop ?? len;
+      const step = spec.step ?? 1;
+
+      // Handle negative indices
+      if (start < 0) start = len + start;
+      if (stop < 0) stop = len + stop;
+
+      if (step === 1) {
+        return typeof a === 'string' ? a.slice(start, stop) : a.slice(start, stop);
+      } else {
+        const result: any[] = [];
+        if (step > 0) {
+          for (let i = start; i < stop; i += step) {
+            result.push(a[i]);
+          }
+        } else {
+          const actualStart = spec.start ?? len - 1;
+          const actualStop = spec.stop ?? -1;
+          for (let i = actualStart; i > actualStop; i += step) {
+            if (i >= 0 && i < len) result.push(a[i]);
+          }
+        }
+        return typeof a === 'string' ? result.join('') : result;
+      }
+    }
+    throw new Error(`pySlice: Unsupported slice expression for JS array/string: ${sliceExpr}`);
+  }
+
   const specs = parseSliceExpr(sliceExpr);
   const shape: number[] = a.shape;
 
@@ -180,7 +467,7 @@ export function pySlice(mx: any, a: any, sliceExpr: string): any {
     if (step === 1) {
       // Use mx.slice for contiguous slicing
       const sliceSize = Math.max(0, stop - start);
-      return mx.slice(a, mx.array([start]), [0], [sliceSize]);
+      return mx.slice(a, new mx.array([start], 'int32'), [0], [sliceSize]);
     } else {
       // Use take with generated indices for stepped slicing
       const indices: number[] = [];
@@ -196,13 +483,14 @@ export function pySlice(mx: any, a: any, sliceExpr: string): any {
           if (i >= 0 && i < dim) indices.push(i);
         }
       }
-      return mx.take(a, mx.array(indices), 0);
+      return mx.take(a, new mx.array(indices, 'int32'), 0);
     }
   }
 
   // Handle single index (not slice)
   if (specs.length === 1 && specs[0].type === 'index') {
-    return mx.take(a, mx.array([specs[0].index!]), 0).squeeze(0);
+    const taken = mx.take(a, new mx.array([specs[0].index!], 'int32'), 0);
+    return mx.squeeze(taken, 0);
   }
 
   // For multi-dimensional slicing, we need to handle each axis
@@ -229,7 +517,8 @@ export function pySlice(mx: any, a: any, sliceExpr: string): any {
 
     if (spec.type === 'index') {
       // Single index selection
-      result = mx.take(result, mx.array([spec.index!]), axis).squeeze(axis);
+      const taken = mx.take(result, new mx.array([spec.index!], 'int32'), axis);
+      result = mx.squeeze(taken, axis);
       axisOffset--; // Dimension was removed
       continue;
     }
@@ -260,7 +549,7 @@ export function pySlice(mx: any, a: any, sliceExpr: string): any {
         const sliceSize = [...result.shape];
         sliceSize[axis] = Math.max(0, stop - start);
         const axes = [axis];
-        result = mx.slice(result, mx.array(startIndices), axes, sliceSize);
+        result = mx.slice(result, new mx.array(startIndices), axes, sliceSize);
       } else {
         // Stepped slice - use take
         const indices: number[] = [];
@@ -273,7 +562,7 @@ export function pySlice(mx: any, a: any, sliceExpr: string): any {
             if (j >= 0 && j < dim) indices.push(j);
           }
         }
-        result = mx.take(result, mx.array(indices), axis);
+        result = mx.take(result, new mx.array(indices, 'int32'), axis);
       }
     }
   }
@@ -296,8 +585,8 @@ export function pySlice(mx: any, a: any, sliceExpr: string): any {
  * // Python: a[1:3] = 0
  * pySliceUpdate(mx, a, '1:3', 0)
  *
- * // Python: a[:, 0] = mx.array([1, 2, 3])
- * pySliceUpdate(mx, a, ':, 0', mx.array([1, 2, 3]))
+ * // Python: a[:, 0] = new mx.array([1, 2, 3])
+ * pySliceUpdate(mx, a, ':, 0', new mx.array([1, 2, 3]))
  */
 export function pySliceUpdate(mx: any, a: any, sliceExpr: string, value: any): any {
   const specs = parseSliceExpr(sliceExpr);
@@ -305,7 +594,7 @@ export function pySliceUpdate(mx: any, a: any, sliceExpr: string, value: any): a
 
   // Convert value to array if needed
   const updateValue = typeof value === 'number' || typeof value === 'boolean'
-    ? mx.array(value)
+    ? new mx.array(value)
     : value;
 
   // Handle simple 1D case: a[start:stop] = value
@@ -338,7 +627,7 @@ export function pySliceUpdate(mx: any, a: any, sliceExpr: string, value: any): a
     }
 
     // Use slice_update
-    const startIndices = mx.array([start]);
+    const startIndices = new mx.array([start], 'int32');
     const axes = [0];
     return mx.slice_update(a, broadcastedUpdate, startIndices, axes);
   }
@@ -356,7 +645,7 @@ export function pySliceUpdate(mx: any, a: any, sliceExpr: string, value: any): a
       broadcastedUpdate = mx.expand_dims(updateValue, 0);
     }
 
-    const startIndices = mx.array([actualIdx]);
+    const startIndices = new mx.array([actualIdx], 'int32');
     const axes = [0];
     return mx.slice_update(a, broadcastedUpdate, startIndices, axes);
   }
@@ -431,7 +720,7 @@ export function pySliceUpdate(mx: any, a: any, sliceExpr: string, value: any): a
     }
   }
 
-  return mx.slice_update(a, broadcastedUpdate, mx.array(startIndices), axes);
+  return mx.slice_update(a, broadcastedUpdate, new mx.array(startIndices), axes);
 }
 
 /**
@@ -516,13 +805,13 @@ export function makeComplex(mx: any, real: any, imag: any): any {
  */
 function ensureFloat32(mx: any, value: any): any {
   if (typeof value === 'number') {
-    return mx.array(value, { dtype: 'float32' });
+    return new mx.array(value, 'float32');
   }
   if (Array.isArray(value)) {
-    return mx.array(value, { dtype: 'float32' });
+    return new mx.array(value, 'float32');
   }
   // Assume it's already an array, cast to float32
-  return mx.astype(value, 'float32');
+  return value.astype('float32');
 }
 
 class AtIndexer {
@@ -609,13 +898,13 @@ class AtIndexer {
     const actualIdx = idx < 0 ? dim + idx : idx;
 
     // Get current value at index
-    const current = this.mx.take(this.a, this.mx.array([actualIdx]), 0);
+    const current = this.mx.take(this.a, new this.mx.array([actualIdx], 'int32'), 0);
 
     // Apply operation
     const updated = op(current, value);
 
     // Put back using slice_update
-    const startIndices = this.mx.array([actualIdx]);
+    const startIndices = new this.mx.array([actualIdx], 'int32');
     const axes = [0];
 
     // Ensure updated has correct shape for slice_update
@@ -663,4 +952,130 @@ class AtIndexer {
     const updated = op(current, value);
     return pySliceUpdate(this.mx, this.a, expr, updated);
   }
+}
+
+/**
+ * Python-style zip function.
+ *
+ * Takes multiple iterables and returns an iterator of tuples,
+ * where the i-th tuple contains the i-th element from each input.
+ *
+ * @param arrays - Arrays to zip together
+ * @returns Array of tuples (represented as arrays)
+ *
+ * @example
+ * pyZip([1, 2, 3], ['a', 'b', 'c']) // [[1, 'a'], [2, 'b'], [3, 'c']]
+ */
+export function pyZip(...arrays: any[][]): any[][] {
+  if (arrays.length === 0) return [];
+  const minLen = Math.min(...arrays.map(a => a.length));
+  const result: any[][] = [];
+  for (let i = 0; i < minLen; i++) {
+    result.push(arrays.map(a => a[i]));
+  }
+  return result;
+}
+
+/**
+ * Python-style itertools.product function.
+ *
+ * Generates Cartesian product of input iterables.
+ *
+ * @param arrays - Arrays to compute product of
+ * @returns Array of tuples (represented as arrays)
+ *
+ * @example
+ * pyProduct([1, 2], ['a', 'b']) // [[1, 'a'], [1, 'b'], [2, 'a'], [2, 'b']]
+ */
+export function pyProduct(...arrays: any[][]): any[][] {
+  if (arrays.length === 0) return [[]];
+  const result: any[][] = [];
+
+  function helper(index: number, current: any[]) {
+    if (index === arrays.length) {
+      result.push([...current]);
+      return;
+    }
+    for (const item of arrays[index]) {
+      current.push(item);
+      helper(index + 1, current);
+      current.pop();
+    }
+  }
+
+  helper(0, []);
+  return result;
+}
+
+/**
+ * Python-style itertools.permutations function.
+ *
+ * Generates all permutations of an iterable.
+ *
+ * @param arr - Array to permute
+ * @param r - Length of permutations (default: arr.length)
+ * @returns Array of permutation tuples
+ *
+ * @example
+ * pyPermutations([1, 2, 3]) // [[1,2,3], [1,3,2], [2,1,3], [2,3,1], [3,1,2], [3,2,1]]
+ * pyPermutations([1, 2, 3], 2) // [[1,2], [1,3], [2,1], [2,3], [3,1], [3,2]]
+ */
+export function pyPermutations(arr: any[], r?: number): any[][] {
+  const n = arr.length;
+  r = r ?? n;
+
+  if (r > n) return [];
+  if (r === 0) return [[]];
+
+  const result: any[][] = [];
+
+  function helper(current: any[], remaining: any[]) {
+    if (current.length === r) {
+      result.push([...current]);
+      return;
+    }
+    for (let i = 0; i < remaining.length; i++) {
+      current.push(remaining[i]);
+      helper(current, [...remaining.slice(0, i), ...remaining.slice(i + 1)]);
+      current.pop();
+    }
+  }
+
+  helper([], arr);
+  return result;
+}
+
+/**
+ * Python-style itertools.combinations function.
+ *
+ * Generates all combinations of an iterable.
+ *
+ * @param arr - Array to generate combinations from
+ * @param r - Length of combinations
+ * @returns Array of combination tuples
+ *
+ * @example
+ * pyCombinations([1, 2, 3], 2) // [[1, 2], [1, 3], [2, 3]]
+ */
+export function pyCombinations(arr: any[], r: number): any[][] {
+  const n = arr.length;
+  if (r > n) return [];
+  if (r === 0) return [[]];
+
+  const result: any[][] = [];
+
+  function helper(start: number, current: any[]) {
+    if (current.length === r) {
+      result.push([...current]);
+      return;
+    }
+    for (let i = start; i < n; i++) {
+      current.push(arr[i]);
+      helper(i + 1, current);
+      current.pop();
+    }
+  }
+
+  helper(0, []);
+  return result;
 }

@@ -78,12 +78,16 @@ Napi::Object MLXArray::Init(Napi::Env env, Napi::Object exports) {
 
 MLXArray::MLXArray(const Napi::CallbackInfo& info)
     : Napi::ObjectWrap<MLXArray>(info), array_(mx::array({}, mx::float32)) {
-  if (info.Length() > 0 && !info[0].IsUndefined()) {
-    array_ = NapiToArray(info[0]);
-    if (info.Length() > 1 && !info[1].IsUndefined()) {
-      mx::Dtype dtype = NapiToDtype(info[1]);
-      array_ = mx::astype(array_, dtype);
+  try {
+    if (info.Length() > 0 && !info[0].IsUndefined()) {
+      array_ = NapiToArray(info[0]);
+      if (info.Length() > 1 && !info[1].IsUndefined()) {
+        mx::Dtype dtype = NapiToDtype(info[1]);
+        array_ = mx::astype(array_, dtype);
+      }
     }
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(info.Env(), e.what());
   }
 }
 
@@ -149,98 +153,114 @@ Napi::Value MLXArray::GetNbytes(const Napi::CallbackInfo& info) {
 
 Napi::Value MLXArray::ToList(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  mx::eval(array_);
+  try {
+    mx::eval(array_);
 
-  size_t size = array_.size();
-  Napi::Array result = Napi::Array::New(env, size);
+    size_t size = array_.size();
+    Napi::Array result = Napi::Array::New(env, size);
 
-  mx::Dtype dtype = array_.dtype();
-  if (dtype == mx::float32) {
-    const float* data = array_.data<float>();
-    for (size_t i = 0; i < size; i++) {
-      result.Set(i, Napi::Number::New(env, data[i]));
+    mx::Dtype dtype = array_.dtype();
+    if (dtype == mx::float32) {
+      const float* data = array_.data<float>();
+      for (size_t i = 0; i < size; i++) {
+        result.Set(i, Napi::Number::New(env, data[i]));
+      }
+    } else if (dtype == mx::float64) {
+      const double* data = array_.data<double>();
+      for (size_t i = 0; i < size; i++) {
+        result.Set(i, Napi::Number::New(env, data[i]));
+      }
+    } else if (dtype == mx::int32) {
+      const int32_t* data = array_.data<int32_t>();
+      for (size_t i = 0; i < size; i++) {
+        result.Set(i, Napi::Number::New(env, data[i]));
+      }
+    } else if (dtype == mx::int64) {
+      const int64_t* data = array_.data<int64_t>();
+      for (size_t i = 0; i < size; i++) {
+        result.Set(i, Napi::Number::New(env, static_cast<double>(data[i])));
+      }
+    } else if (dtype == mx::uint32) {
+      const uint32_t* data = array_.data<uint32_t>();
+      for (size_t i = 0; i < size; i++) {
+        result.Set(i, Napi::Number::New(env, data[i]));
+      }
+    } else if (dtype == mx::bool_) {
+      const bool* data = array_.data<bool>();
+      for (size_t i = 0; i < size; i++) {
+        result.Set(i, Napi::Boolean::New(env, data[i]));
+      }
+    } else {
+      // Fallback: convert to float32 first
+      mx::array converted = mx::astype(array_, mx::float32);
+      mx::eval(converted);
+      const float* data = converted.data<float>();
+      for (size_t i = 0; i < size; i++) {
+        result.Set(i, Napi::Number::New(env, data[i]));
+      }
     }
-  } else if (dtype == mx::float64) {
-    const double* data = array_.data<double>();
-    for (size_t i = 0; i < size; i++) {
-      result.Set(i, Napi::Number::New(env, data[i]));
-    }
-  } else if (dtype == mx::int32) {
-    const int32_t* data = array_.data<int32_t>();
-    for (size_t i = 0; i < size; i++) {
-      result.Set(i, Napi::Number::New(env, data[i]));
-    }
-  } else if (dtype == mx::int64) {
-    const int64_t* data = array_.data<int64_t>();
-    for (size_t i = 0; i < size; i++) {
-      result.Set(i, Napi::Number::New(env, static_cast<double>(data[i])));
-    }
-  } else if (dtype == mx::uint32) {
-    const uint32_t* data = array_.data<uint32_t>();
-    for (size_t i = 0; i < size; i++) {
-      result.Set(i, Napi::Number::New(env, data[i]));
-    }
-  } else if (dtype == mx::bool_) {
-    const bool* data = array_.data<bool>();
-    for (size_t i = 0; i < size; i++) {
-      result.Set(i, Napi::Boolean::New(env, data[i]));
-    }
-  } else {
-    // Fallback: convert to float32 first
-    mx::array converted = mx::astype(array_, mx::float32);
-    mx::eval(converted);
-    const float* data = converted.data<float>();
-    for (size_t i = 0; i < size; i++) {
-      result.Set(i, Napi::Number::New(env, data[i]));
-    }
+
+    return result;
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
   }
-
-  return result;
 }
 
 Napi::Value MLXArray::Item(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  mx::eval(array_);
+  try {
+    mx::eval(array_);
 
-  if (array_.size() != 1) {
-    throw Napi::Error::New(env, "item() only works for arrays with exactly one element");
+    if (array_.size() != 1) {
+      throw Napi::Error::New(env, "item() only works for arrays with exactly one element");
+    }
+
+    mx::Dtype dtype = array_.dtype();
+    if (dtype == mx::float32) {
+      return Napi::Number::New(env, array_.data<float>()[0]);
+    } else if (dtype == mx::float64) {
+      return Napi::Number::New(env, array_.data<double>()[0]);
+    } else if (dtype == mx::int32) {
+      return Napi::Number::New(env, array_.data<int32_t>()[0]);
+    } else if (dtype == mx::bool_) {
+      return Napi::Boolean::New(env, array_.data<bool>()[0]);
+    }
+
+    // Fallback
+    mx::array converted = mx::astype(array_, mx::float32);
+    mx::eval(converted);
+    return Napi::Number::New(env, converted.data<float>()[0]);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
   }
-
-  mx::Dtype dtype = array_.dtype();
-  if (dtype == mx::float32) {
-    return Napi::Number::New(env, array_.data<float>()[0]);
-  } else if (dtype == mx::float64) {
-    return Napi::Number::New(env, array_.data<double>()[0]);
-  } else if (dtype == mx::int32) {
-    return Napi::Number::New(env, array_.data<int32_t>()[0]);
-  } else if (dtype == mx::bool_) {
-    return Napi::Boolean::New(env, array_.data<bool>()[0]);
-  }
-
-  // Fallback
-  mx::array converted = mx::astype(array_, mx::float32);
-  mx::eval(converted);
-  return Napi::Number::New(env, converted.data<float>()[0]);
 }
 
 Napi::Value MLXArray::Reshape(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  if (info.Length() < 1) {
-    throw Napi::TypeError::New(env, "reshape requires shape argument");
+  try {
+    if (info.Length() < 1) {
+      throw Napi::TypeError::New(env, "reshape requires shape argument");
+    }
+    mx::Shape shape = NapiToShape(info[0]);
+    mx::array result = mx::reshape(array_, shape);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
   }
-  mx::Shape shape = NapiToShape(info[0]);
-  mx::array result = mx::reshape(array_, shape);
-  return ArrayToNapi(env, result);
 }
 
 Napi::Value MLXArray::Astype(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  if (info.Length() < 1) {
-    throw Napi::TypeError::New(env, "astype requires dtype argument");
+  try {
+    if (info.Length() < 1) {
+      throw Napi::TypeError::New(env, "astype requires dtype argument");
+    }
+    mx::Dtype dtype = NapiToDtype(info[0]);
+    mx::array result = mx::astype(array_, dtype);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
   }
-  mx::Dtype dtype = NapiToDtype(info[0]);
-  mx::array result = mx::astype(array_, dtype);
-  return ArrayToNapi(env, result);
 }
 
 // ============================================================================
@@ -481,16 +501,24 @@ Napi::Value Wrap_reshape(const Napi::CallbackInfo& info) {
   mx::array a = NapiToArray(info[0]);
   mx::Shape shape = NapiToShape(info[1]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::reshape(a, shape, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::reshape(a, shape, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_flatten(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::flatten(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::flatten(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_unflatten(const Napi::CallbackInfo& info) {
@@ -499,16 +527,24 @@ Napi::Value Wrap_unflatten(const Napi::CallbackInfo& info) {
   int axis = info[1].As<Napi::Number>().Int32Value();
   mx::Shape shape = NapiToShape(info[2]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::unflatten(a, axis, shape, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::unflatten(a, axis, shape, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_squeeze(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::squeeze(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::squeeze(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_expand_dims(const Napi::CallbackInfo& info) {
@@ -516,32 +552,48 @@ Napi::Value Wrap_expand_dims(const Napi::CallbackInfo& info) {
   mx::array a = NapiToArray(info[0]);
   std::vector<int> axes = NapiToVecInt(info[1]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::expand_dims(a, axes, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::expand_dims(a, axes, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_abs(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::abs(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::abs(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_sign(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::sign(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::sign(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_negative(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::negative(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::negative(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_add(const Napi::CallbackInfo& info) {
@@ -549,8 +601,12 @@ Napi::Value Wrap_add(const Napi::CallbackInfo& info) {
   mx::array a = NapiToArray(info[0]);
   mx::array b = NapiToArray(info[1]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::add(a, b, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::add(a, b, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_subtract(const Napi::CallbackInfo& info) {
@@ -558,8 +614,12 @@ Napi::Value Wrap_subtract(const Napi::CallbackInfo& info) {
   mx::array a = NapiToArray(info[0]);
   mx::array b = NapiToArray(info[1]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::subtract(a, b, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::subtract(a, b, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_multiply(const Napi::CallbackInfo& info) {
@@ -567,8 +627,12 @@ Napi::Value Wrap_multiply(const Napi::CallbackInfo& info) {
   mx::array a = NapiToArray(info[0]);
   mx::array b = NapiToArray(info[1]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::multiply(a, b, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::multiply(a, b, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_divide(const Napi::CallbackInfo& info) {
@@ -576,8 +640,12 @@ Napi::Value Wrap_divide(const Napi::CallbackInfo& info) {
   mx::array a = NapiToArray(info[0]);
   mx::array b = NapiToArray(info[1]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::divide(a, b, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::divide(a, b, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_divmod(const Napi::CallbackInfo& info) {
@@ -585,8 +653,12 @@ Napi::Value Wrap_divmod(const Napi::CallbackInfo& info) {
   mx::array a = NapiToArray(info[0]);
   mx::array b = NapiToArray(info[1]);
   mx::StreamOrDevice s = {};
-  std::vector<mx::array> result = mx::divmod(a, b, s);
-  return VecArrayToNapi(env, result);
+  try {
+    std::vector<mx::array> result = mx::divmod(a, b, s);
+    return VecArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_floor_divide(const Napi::CallbackInfo& info) {
@@ -594,8 +666,12 @@ Napi::Value Wrap_floor_divide(const Napi::CallbackInfo& info) {
   mx::array a = NapiToArray(info[0]);
   mx::array b = NapiToArray(info[1]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::floor_divide(a, b, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::floor_divide(a, b, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_remainder(const Napi::CallbackInfo& info) {
@@ -603,8 +679,12 @@ Napi::Value Wrap_remainder(const Napi::CallbackInfo& info) {
   mx::array a = NapiToArray(info[0]);
   mx::array b = NapiToArray(info[1]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::remainder(a, b, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::remainder(a, b, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_equal(const Napi::CallbackInfo& info) {
@@ -612,8 +692,12 @@ Napi::Value Wrap_equal(const Napi::CallbackInfo& info) {
   mx::array a = NapiToArray(info[0]);
   mx::array b = NapiToArray(info[1]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::equal(a, b, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::equal(a, b, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_not_equal(const Napi::CallbackInfo& info) {
@@ -621,8 +705,12 @@ Napi::Value Wrap_not_equal(const Napi::CallbackInfo& info) {
   mx::array a = NapiToArray(info[0]);
   mx::array b = NapiToArray(info[1]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::not_equal(a, b, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::not_equal(a, b, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_less(const Napi::CallbackInfo& info) {
@@ -630,8 +718,12 @@ Napi::Value Wrap_less(const Napi::CallbackInfo& info) {
   mx::array a = NapiToArray(info[0]);
   mx::array b = NapiToArray(info[1]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::less(a, b, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::less(a, b, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_less_equal(const Napi::CallbackInfo& info) {
@@ -639,8 +731,12 @@ Napi::Value Wrap_less_equal(const Napi::CallbackInfo& info) {
   mx::array a = NapiToArray(info[0]);
   mx::array b = NapiToArray(info[1]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::less_equal(a, b, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::less_equal(a, b, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_greater(const Napi::CallbackInfo& info) {
@@ -648,8 +744,12 @@ Napi::Value Wrap_greater(const Napi::CallbackInfo& info) {
   mx::array a = NapiToArray(info[0]);
   mx::array b = NapiToArray(info[1]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::greater(a, b, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::greater(a, b, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_greater_equal(const Napi::CallbackInfo& info) {
@@ -657,8 +757,12 @@ Napi::Value Wrap_greater_equal(const Napi::CallbackInfo& info) {
   mx::array a = NapiToArray(info[0]);
   mx::array b = NapiToArray(info[1]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::greater_equal(a, b, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::greater_equal(a, b, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_array_equal(const Napi::CallbackInfo& info) {
@@ -666,8 +770,12 @@ Napi::Value Wrap_array_equal(const Napi::CallbackInfo& info) {
   mx::array a = NapiToArray(info[0]);
   mx::array b = NapiToArray(info[1]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::array_equal(a, b, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::array_equal(a, b, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_matmul(const Napi::CallbackInfo& info) {
@@ -675,48 +783,72 @@ Napi::Value Wrap_matmul(const Napi::CallbackInfo& info) {
   mx::array a = NapiToArray(info[0]);
   mx::array b = NapiToArray(info[1]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::matmul(a, b, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::matmul(a, b, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_square(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::square(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::square(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_sqrt(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::sqrt(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::sqrt(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_rsqrt(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::rsqrt(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::rsqrt(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_reciprocal(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::reciprocal(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::reciprocal(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_logical_not(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::logical_not(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::logical_not(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_logical_and(const Napi::CallbackInfo& info) {
@@ -724,8 +856,12 @@ Napi::Value Wrap_logical_and(const Napi::CallbackInfo& info) {
   mx::array a = NapiToArray(info[0]);
   mx::array b = NapiToArray(info[1]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::logical_and(a, b, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::logical_and(a, b, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_logical_or(const Napi::CallbackInfo& info) {
@@ -733,8 +869,12 @@ Napi::Value Wrap_logical_or(const Napi::CallbackInfo& info) {
   mx::array a = NapiToArray(info[0]);
   mx::array b = NapiToArray(info[1]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::logical_or(a, b, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::logical_or(a, b, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_logaddexp(const Napi::CallbackInfo& info) {
@@ -742,88 +882,132 @@ Napi::Value Wrap_logaddexp(const Napi::CallbackInfo& info) {
   mx::array a = NapiToArray(info[0]);
   mx::array b = NapiToArray(info[1]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::logaddexp(a, b, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::logaddexp(a, b, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_exp(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::exp(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::exp(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_expm1(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::expm1(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::expm1(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_erf(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::erf(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::erf(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_erfinv(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::erfinv(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::erfinv(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_sin(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::sin(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::sin(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_cos(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::cos(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::cos(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_tan(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::tan(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::tan(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_arcsin(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::arcsin(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::arcsin(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_arccos(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::arccos(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::arccos(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_arctan(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::arctan(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::arctan(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_arctan2(const Napi::CallbackInfo& info) {
@@ -831,120 +1015,180 @@ Napi::Value Wrap_arctan2(const Napi::CallbackInfo& info) {
   mx::array a = NapiToArray(info[0]);
   mx::array b = NapiToArray(info[1]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::arctan2(a, b, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::arctan2(a, b, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_sinh(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::sinh(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::sinh(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_cosh(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::cosh(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::cosh(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_tanh(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::tanh(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::tanh(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_arcsinh(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::arcsinh(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::arcsinh(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_arccosh(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::arccosh(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::arccosh(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_arctanh(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::arctanh(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::arctanh(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_degrees(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::degrees(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::degrees(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_radians(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::radians(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::radians(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_log(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::log(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::log(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_log2(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::log2(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::log2(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_log10(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::log10(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::log10(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_log1p(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::log1p(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::log1p(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_stop_gradient(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::stop_gradient(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::stop_gradient(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_sigmoid(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::sigmoid(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::sigmoid(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_power(const Napi::CallbackInfo& info) {
@@ -952,29 +1196,37 @@ Napi::Value Wrap_power(const Napi::CallbackInfo& info) {
   mx::array a = NapiToArray(info[0]);
   mx::array b = NapiToArray(info[1]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::power(a, b, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::power(a, b, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_arange(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  mx::StreamOrDevice s = {};
-  if (info.Length() == 1) {
-    double stop = info[0].As<Napi::Number>().DoubleValue();
-    return ArrayToNapi(env, mx::arange(stop, s));
+  try {
+    mx::StreamOrDevice s = {};
+    if (info.Length() == 1) {
+      double stop = info[0].As<Napi::Number>().DoubleValue();
+      return ArrayToNapi(env, mx::arange(stop, s));
+    }
+    if (info.Length() == 2) {
+      double start = info[0].As<Napi::Number>().DoubleValue();
+      double stop = info[1].As<Napi::Number>().DoubleValue();
+      return ArrayToNapi(env, mx::arange(start, stop, 1.0, s));
+    }
+    if (info.Length() >= 3) {
+      double start = info[0].As<Napi::Number>().DoubleValue();
+      double stop = info[1].As<Napi::Number>().DoubleValue();
+      double step = info[2].As<Napi::Number>().DoubleValue();
+      return ArrayToNapi(env, mx::arange(start, stop, step, s));
+    }
+    return env.Undefined();
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
   }
-  if (info.Length() == 2) {
-    double start = info[0].As<Napi::Number>().DoubleValue();
-    double stop = info[1].As<Napi::Number>().DoubleValue();
-    return ArrayToNapi(env, mx::arange(start, stop, 1.0, s));
-  }
-  if (info.Length() >= 3) {
-    double start = info[0].As<Napi::Number>().DoubleValue();
-    double stop = info[1].As<Napi::Number>().DoubleValue();
-    double step = info[2].As<Napi::Number>().DoubleValue();
-    return ArrayToNapi(env, mx::arange(start, stop, step, s));
-  }
-  return env.Undefined();
 }
 
 Napi::Value Wrap_linspace(const Napi::CallbackInfo& info) {
@@ -986,8 +1238,12 @@ Napi::Value Wrap_linspace(const Napi::CallbackInfo& info) {
   mx::Dtype dtype =
       info.Length() > 3 && !info[3].IsUndefined() ? NapiToDtype(info[3]) : mx::float32;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::linspace(start, stop, num, dtype, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::linspace(start, stop, num, dtype, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_kron(const Napi::CallbackInfo& info) {
@@ -995,8 +1251,12 @@ Napi::Value Wrap_kron(const Napi::CallbackInfo& info) {
   mx::array a = NapiToArray(info[0]);
   mx::array b = NapiToArray(info[1]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::kron(a, b, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::kron(a, b, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_take(const Napi::CallbackInfo& info) {
@@ -1004,8 +1264,12 @@ Napi::Value Wrap_take(const Napi::CallbackInfo& info) {
   mx::array a = NapiToArray(info[0]);
   mx::array indices = NapiToArray(info[1]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::take(a, indices, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::take(a, indices, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_take_along_axis(const Napi::CallbackInfo& info) {
@@ -1014,8 +1278,12 @@ Napi::Value Wrap_take_along_axis(const Napi::CallbackInfo& info) {
   mx::array indices = NapiToArray(info[1]);
   int axis = info[2].As<Napi::Number>().Int32Value();
   mx::StreamOrDevice s = {};
-  mx::array result = mx::take_along_axis(a, indices, axis, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::take_along_axis(a, indices, axis, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_put_along_axis(const Napi::CallbackInfo& info) {
@@ -1025,8 +1293,12 @@ Napi::Value Wrap_put_along_axis(const Napi::CallbackInfo& info) {
   mx::array values = NapiToArray(info[2]);
   int axis = info[3].As<Napi::Number>().Int32Value();
   mx::StreamOrDevice s = {};
-  mx::array result = mx::put_along_axis(a, indices, values, axis, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::put_along_axis(a, indices, values, axis, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_full(const Napi::CallbackInfo& info) {
@@ -1034,16 +1306,24 @@ Napi::Value Wrap_full(const Napi::CallbackInfo& info) {
   mx::Shape shape = NapiToShape(info[0]);
   mx::array vals = NapiToArray(info[1]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::full(shape, vals, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::full(shape, vals, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_zeros(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::Shape shape = NapiToShape(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::zeros(shape, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::zeros(shape, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 // asarray: Not found in C++ headers
@@ -1051,40 +1331,60 @@ Napi::Value Wrap_zeros_like(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::zeros_like(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::zeros_like(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_ones(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::Shape shape = NapiToShape(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::ones(shape, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::ones(shape, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_ones_like(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::ones_like(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::ones_like(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_eye(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   int n = info[0].As<Napi::Number>().Int32Value();
   mx::StreamOrDevice s = {};
-  mx::array result = mx::eye(n, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::eye(n, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_identity(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   int n = info[0].As<Napi::Number>().Int32Value();
   mx::StreamOrDevice s = {};
-  mx::array result = mx::identity(n, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::identity(n, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_tri(const Napi::CallbackInfo& info) {
@@ -1092,8 +1392,12 @@ Napi::Value Wrap_tri(const Napi::CallbackInfo& info) {
   int n = info[0].As<Napi::Number>().Int32Value();
   mx::Dtype type = NapiToDtype(info[1]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::tri(n, type, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::tri(n, type, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_tril(const Napi::CallbackInfo& info) {
@@ -1101,8 +1405,12 @@ Napi::Value Wrap_tril(const Napi::CallbackInfo& info) {
   mx::array x = NapiToArray(info[0]);
   int k = info.Length() > 1 && !info[1].IsUndefined() ? info[1].As<Napi::Number>().Int32Value() : 0;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::tril(x, k, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::tril(x, k, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_triu(const Napi::CallbackInfo& info) {
@@ -1110,8 +1418,12 @@ Napi::Value Wrap_triu(const Napi::CallbackInfo& info) {
   mx::array x = NapiToArray(info[0]);
   int k = info.Length() > 1 && !info[1].IsUndefined() ? info[1].As<Napi::Number>().Int32Value() : 0;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::triu(x, k, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::triu(x, k, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_allclose(const Napi::CallbackInfo& info) {
@@ -1125,8 +1437,12 @@ Napi::Value Wrap_allclose(const Napi::CallbackInfo& info) {
   bool equal_nan =
       info.Length() > 4 && !info[4].IsUndefined() ? info[4].As<Napi::Boolean>().Value() : false;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::allclose(a, b, rtol, atol, equal_nan, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::allclose(a, b, rtol, atol, equal_nan, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_isclose(const Napi::CallbackInfo& info) {
@@ -1140,58 +1456,70 @@ Napi::Value Wrap_isclose(const Napi::CallbackInfo& info) {
   bool equal_nan =
       info.Length() > 4 && !info[4].IsUndefined() ? info[4].As<Napi::Boolean>().Value() : false;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::isclose(a, b, rtol, atol, equal_nan, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::isclose(a, b, rtol, atol, equal_nan, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_all(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  mx::array a = NapiToArray(info[0]);
-  bool keepdims = false;
-  mx::StreamOrDevice s = {};
-  if (info.Length() == 1 || info[1].IsUndefined()) {
+  try {
+    mx::array a = NapiToArray(info[0]);
+    bool keepdims = false;
+    mx::StreamOrDevice s = {};
+    if (info.Length() == 1 || info[1].IsUndefined()) {
+      return ArrayToNapi(env, mx::all(a, keepdims, s));
+    }
+    if (info[1].IsNumber()) {
+      int axis = info[1].As<Napi::Number>().Int32Value();
+      if (info.Length() > 2 && info[2].IsBoolean()) {
+        keepdims = info[2].As<Napi::Boolean>().Value();
+      }
+      return ArrayToNapi(env, mx::all(a, axis, keepdims, s));
+    }
+    if (info[1].IsArray()) {
+      std::vector<int> axes = NapiToVecInt(info[1]);
+      if (info.Length() > 2 && info[2].IsBoolean()) {
+        keepdims = info[2].As<Napi::Boolean>().Value();
+      }
+      return ArrayToNapi(env, mx::all(a, axes, keepdims, s));
+    }
     return ArrayToNapi(env, mx::all(a, keepdims, s));
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
   }
-  if (info[1].IsNumber()) {
-    int axis = info[1].As<Napi::Number>().Int32Value();
-    if (info.Length() > 2 && info[2].IsBoolean()) {
-      keepdims = info[2].As<Napi::Boolean>().Value();
-    }
-    return ArrayToNapi(env, mx::all(a, axis, keepdims, s));
-  }
-  if (info[1].IsArray()) {
-    std::vector<int> axes = NapiToVecInt(info[1]);
-    if (info.Length() > 2 && info[2].IsBoolean()) {
-      keepdims = info[2].As<Napi::Boolean>().Value();
-    }
-    return ArrayToNapi(env, mx::all(a, axes, keepdims, s));
-  }
-  return ArrayToNapi(env, mx::all(a, keepdims, s));
 }
 
 Napi::Value Wrap_any(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  mx::array a = NapiToArray(info[0]);
-  bool keepdims = false;
-  mx::StreamOrDevice s = {};
-  if (info.Length() == 1 || info[1].IsUndefined()) {
+  try {
+    mx::array a = NapiToArray(info[0]);
+    bool keepdims = false;
+    mx::StreamOrDevice s = {};
+    if (info.Length() == 1 || info[1].IsUndefined()) {
+      return ArrayToNapi(env, mx::any(a, keepdims, s));
+    }
+    if (info[1].IsNumber()) {
+      int axis = info[1].As<Napi::Number>().Int32Value();
+      if (info.Length() > 2 && info[2].IsBoolean()) {
+        keepdims = info[2].As<Napi::Boolean>().Value();
+      }
+      return ArrayToNapi(env, mx::any(a, axis, keepdims, s));
+    }
+    if (info[1].IsArray()) {
+      std::vector<int> axes = NapiToVecInt(info[1]);
+      if (info.Length() > 2 && info[2].IsBoolean()) {
+        keepdims = info[2].As<Napi::Boolean>().Value();
+      }
+      return ArrayToNapi(env, mx::any(a, axes, keepdims, s));
+    }
     return ArrayToNapi(env, mx::any(a, keepdims, s));
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
   }
-  if (info[1].IsNumber()) {
-    int axis = info[1].As<Napi::Number>().Int32Value();
-    if (info.Length() > 2 && info[2].IsBoolean()) {
-      keepdims = info[2].As<Napi::Boolean>().Value();
-    }
-    return ArrayToNapi(env, mx::any(a, axis, keepdims, s));
-  }
-  if (info[1].IsArray()) {
-    std::vector<int> axes = NapiToVecInt(info[1]);
-    if (info.Length() > 2 && info[2].IsBoolean()) {
-      keepdims = info[2].As<Napi::Boolean>().Value();
-    }
-    return ArrayToNapi(env, mx::any(a, axes, keepdims, s));
-  }
-  return ArrayToNapi(env, mx::any(a, keepdims, s));
 }
 
 Napi::Value Wrap_minimum(const Napi::CallbackInfo& info) {
@@ -1199,8 +1527,12 @@ Napi::Value Wrap_minimum(const Napi::CallbackInfo& info) {
   mx::array a = NapiToArray(info[0]);
   mx::array b = NapiToArray(info[1]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::minimum(a, b, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::minimum(a, b, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_maximum(const Napi::CallbackInfo& info) {
@@ -1208,64 +1540,96 @@ Napi::Value Wrap_maximum(const Napi::CallbackInfo& info) {
   mx::array a = NapiToArray(info[0]);
   mx::array b = NapiToArray(info[1]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::maximum(a, b, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::maximum(a, b, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_floor(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::floor(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::floor(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_ceil(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::ceil(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::ceil(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_isnan(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::isnan(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::isnan(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_isinf(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::isinf(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::isinf(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_isfinite(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::isfinite(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::isfinite(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_isposinf(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::isposinf(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::isposinf(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_isneginf(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::isneginf(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::isneginf(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_moveaxis(const Napi::CallbackInfo& info) {
@@ -1274,8 +1638,12 @@ Napi::Value Wrap_moveaxis(const Napi::CallbackInfo& info) {
   int source = info[1].As<Napi::Number>().Int32Value();
   int destination = info[2].As<Napi::Number>().Int32Value();
   mx::StreamOrDevice s = {};
-  mx::array result = mx::moveaxis(a, source, destination, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::moveaxis(a, source, destination, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_swapaxes(const Napi::CallbackInfo& info) {
@@ -1284,117 +1652,141 @@ Napi::Value Wrap_swapaxes(const Napi::CallbackInfo& info) {
   int axis1 = info[1].As<Napi::Number>().Int32Value();
   int axis2 = info[2].As<Napi::Number>().Int32Value();
   mx::StreamOrDevice s = {};
-  mx::array result = mx::swapaxes(a, axis1, axis2, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::swapaxes(a, axis1, axis2, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_transpose(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::transpose(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::transpose(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 // permute_dims: Not found in C++ headers
 Napi::Value Wrap_sum(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  mx::array a = NapiToArray(info[0]);
-  bool keepdims = false;
-  mx::StreamOrDevice s = {};
-  if (info.Length() == 1 || info[1].IsUndefined()) {
+  try {
+    mx::array a = NapiToArray(info[0]);
+    bool keepdims = false;
+    mx::StreamOrDevice s = {};
+    if (info.Length() == 1 || info[1].IsUndefined()) {
+      return ArrayToNapi(env, mx::sum(a, keepdims, s));
+    }
+    if (info[1].IsNumber()) {
+      int axis = info[1].As<Napi::Number>().Int32Value();
+      if (info.Length() > 2 && info[2].IsBoolean()) {
+        keepdims = info[2].As<Napi::Boolean>().Value();
+      }
+      return ArrayToNapi(env, mx::sum(a, axis, keepdims, s));
+    }
+    if (info[1].IsArray()) {
+      std::vector<int> axes = NapiToVecInt(info[1]);
+      if (info.Length() > 2 && info[2].IsBoolean()) {
+        keepdims = info[2].As<Napi::Boolean>().Value();
+      }
+      return ArrayToNapi(env, mx::sum(a, axes, keepdims, s));
+    }
     return ArrayToNapi(env, mx::sum(a, keepdims, s));
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
   }
-  if (info[1].IsNumber()) {
-    int axis = info[1].As<Napi::Number>().Int32Value();
-    if (info.Length() > 2 && info[2].IsBoolean()) {
-      keepdims = info[2].As<Napi::Boolean>().Value();
-    }
-    return ArrayToNapi(env, mx::sum(a, axis, keepdims, s));
-  }
-  if (info[1].IsArray()) {
-    std::vector<int> axes = NapiToVecInt(info[1]);
-    if (info.Length() > 2 && info[2].IsBoolean()) {
-      keepdims = info[2].As<Napi::Boolean>().Value();
-    }
-    return ArrayToNapi(env, mx::sum(a, axes, keepdims, s));
-  }
-  return ArrayToNapi(env, mx::sum(a, keepdims, s));
 }
 
 Napi::Value Wrap_prod(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  mx::array a = NapiToArray(info[0]);
-  bool keepdims = false;
-  mx::StreamOrDevice s = {};
-  if (info.Length() == 1 || info[1].IsUndefined()) {
+  try {
+    mx::array a = NapiToArray(info[0]);
+    bool keepdims = false;
+    mx::StreamOrDevice s = {};
+    if (info.Length() == 1 || info[1].IsUndefined()) {
+      return ArrayToNapi(env, mx::prod(a, keepdims, s));
+    }
+    if (info[1].IsNumber()) {
+      int axis = info[1].As<Napi::Number>().Int32Value();
+      if (info.Length() > 2 && info[2].IsBoolean()) {
+        keepdims = info[2].As<Napi::Boolean>().Value();
+      }
+      return ArrayToNapi(env, mx::prod(a, axis, keepdims, s));
+    }
+    if (info[1].IsArray()) {
+      std::vector<int> axes = NapiToVecInt(info[1]);
+      if (info.Length() > 2 && info[2].IsBoolean()) {
+        keepdims = info[2].As<Napi::Boolean>().Value();
+      }
+      return ArrayToNapi(env, mx::prod(a, axes, keepdims, s));
+    }
     return ArrayToNapi(env, mx::prod(a, keepdims, s));
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
   }
-  if (info[1].IsNumber()) {
-    int axis = info[1].As<Napi::Number>().Int32Value();
-    if (info.Length() > 2 && info[2].IsBoolean()) {
-      keepdims = info[2].As<Napi::Boolean>().Value();
-    }
-    return ArrayToNapi(env, mx::prod(a, axis, keepdims, s));
-  }
-  if (info[1].IsArray()) {
-    std::vector<int> axes = NapiToVecInt(info[1]);
-    if (info.Length() > 2 && info[2].IsBoolean()) {
-      keepdims = info[2].As<Napi::Boolean>().Value();
-    }
-    return ArrayToNapi(env, mx::prod(a, axes, keepdims, s));
-  }
-  return ArrayToNapi(env, mx::prod(a, keepdims, s));
 }
 
 Napi::Value Wrap_min(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  mx::array a = NapiToArray(info[0]);
-  bool keepdims = false;
-  mx::StreamOrDevice s = {};
-  if (info.Length() == 1 || info[1].IsUndefined()) {
+  try {
+    mx::array a = NapiToArray(info[0]);
+    bool keepdims = false;
+    mx::StreamOrDevice s = {};
+    if (info.Length() == 1 || info[1].IsUndefined()) {
+      return ArrayToNapi(env, mx::min(a, keepdims, s));
+    }
+    if (info[1].IsNumber()) {
+      int axis = info[1].As<Napi::Number>().Int32Value();
+      if (info.Length() > 2 && info[2].IsBoolean()) {
+        keepdims = info[2].As<Napi::Boolean>().Value();
+      }
+      return ArrayToNapi(env, mx::min(a, axis, keepdims, s));
+    }
+    if (info[1].IsArray()) {
+      std::vector<int> axes = NapiToVecInt(info[1]);
+      if (info.Length() > 2 && info[2].IsBoolean()) {
+        keepdims = info[2].As<Napi::Boolean>().Value();
+      }
+      return ArrayToNapi(env, mx::min(a, axes, keepdims, s));
+    }
     return ArrayToNapi(env, mx::min(a, keepdims, s));
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
   }
-  if (info[1].IsNumber()) {
-    int axis = info[1].As<Napi::Number>().Int32Value();
-    if (info.Length() > 2 && info[2].IsBoolean()) {
-      keepdims = info[2].As<Napi::Boolean>().Value();
-    }
-    return ArrayToNapi(env, mx::min(a, axis, keepdims, s));
-  }
-  if (info[1].IsArray()) {
-    std::vector<int> axes = NapiToVecInt(info[1]);
-    if (info.Length() > 2 && info[2].IsBoolean()) {
-      keepdims = info[2].As<Napi::Boolean>().Value();
-    }
-    return ArrayToNapi(env, mx::min(a, axes, keepdims, s));
-  }
-  return ArrayToNapi(env, mx::min(a, keepdims, s));
 }
 
 Napi::Value Wrap_max(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  mx::array a = NapiToArray(info[0]);
-  bool keepdims = false;
-  mx::StreamOrDevice s = {};
-  if (info.Length() == 1 || info[1].IsUndefined()) {
+  try {
+    mx::array a = NapiToArray(info[0]);
+    bool keepdims = false;
+    mx::StreamOrDevice s = {};
+    if (info.Length() == 1 || info[1].IsUndefined()) {
+      return ArrayToNapi(env, mx::max(a, keepdims, s));
+    }
+    if (info[1].IsNumber()) {
+      int axis = info[1].As<Napi::Number>().Int32Value();
+      if (info.Length() > 2 && info[2].IsBoolean()) {
+        keepdims = info[2].As<Napi::Boolean>().Value();
+      }
+      return ArrayToNapi(env, mx::max(a, axis, keepdims, s));
+    }
+    if (info[1].IsArray()) {
+      std::vector<int> axes = NapiToVecInt(info[1]);
+      if (info.Length() > 2 && info[2].IsBoolean()) {
+        keepdims = info[2].As<Napi::Boolean>().Value();
+      }
+      return ArrayToNapi(env, mx::max(a, axes, keepdims, s));
+    }
     return ArrayToNapi(env, mx::max(a, keepdims, s));
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
   }
-  if (info[1].IsNumber()) {
-    int axis = info[1].As<Napi::Number>().Int32Value();
-    if (info.Length() > 2 && info[2].IsBoolean()) {
-      keepdims = info[2].As<Napi::Boolean>().Value();
-    }
-    return ArrayToNapi(env, mx::max(a, axis, keepdims, s));
-  }
-  if (info[1].IsArray()) {
-    std::vector<int> axes = NapiToVecInt(info[1]);
-    if (info.Length() > 2 && info[2].IsBoolean()) {
-      keepdims = info[2].As<Napi::Boolean>().Value();
-    }
-    return ArrayToNapi(env, mx::max(a, axes, keepdims, s));
-  }
-  return ArrayToNapi(env, mx::max(a, keepdims, s));
 }
 
 Napi::Value Wrap_logcumsumexp(const Napi::CallbackInfo& info) {
@@ -1405,147 +1797,171 @@ Napi::Value Wrap_logcumsumexp(const Napi::CallbackInfo& info) {
   bool inclusive =
       info.Length() > 2 && !info[2].IsUndefined() ? info[2].As<Napi::Boolean>().Value() : true;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::logcumsumexp(a, reverse, inclusive, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::logcumsumexp(a, reverse, inclusive, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_logsumexp(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  mx::array a = NapiToArray(info[0]);
-  bool keepdims = false;
-  mx::StreamOrDevice s = {};
-  if (info.Length() == 1 || info[1].IsUndefined()) {
+  try {
+    mx::array a = NapiToArray(info[0]);
+    bool keepdims = false;
+    mx::StreamOrDevice s = {};
+    if (info.Length() == 1 || info[1].IsUndefined()) {
+      return ArrayToNapi(env, mx::logsumexp(a, keepdims, s));
+    }
+    if (info[1].IsNumber()) {
+      int axis = info[1].As<Napi::Number>().Int32Value();
+      if (info.Length() > 2 && info[2].IsBoolean()) {
+        keepdims = info[2].As<Napi::Boolean>().Value();
+      }
+      return ArrayToNapi(env, mx::logsumexp(a, axis, keepdims, s));
+    }
+    if (info[1].IsArray()) {
+      std::vector<int> axes = NapiToVecInt(info[1]);
+      if (info.Length() > 2 && info[2].IsBoolean()) {
+        keepdims = info[2].As<Napi::Boolean>().Value();
+      }
+      return ArrayToNapi(env, mx::logsumexp(a, axes, keepdims, s));
+    }
     return ArrayToNapi(env, mx::logsumexp(a, keepdims, s));
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
   }
-  if (info[1].IsNumber()) {
-    int axis = info[1].As<Napi::Number>().Int32Value();
-    if (info.Length() > 2 && info[2].IsBoolean()) {
-      keepdims = info[2].As<Napi::Boolean>().Value();
-    }
-    return ArrayToNapi(env, mx::logsumexp(a, axis, keepdims, s));
-  }
-  if (info[1].IsArray()) {
-    std::vector<int> axes = NapiToVecInt(info[1]);
-    if (info.Length() > 2 && info[2].IsBoolean()) {
-      keepdims = info[2].As<Napi::Boolean>().Value();
-    }
-    return ArrayToNapi(env, mx::logsumexp(a, axes, keepdims, s));
-  }
-  return ArrayToNapi(env, mx::logsumexp(a, keepdims, s));
 }
 
 Napi::Value Wrap_mean(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  mx::array a = NapiToArray(info[0]);
-  bool keepdims = false;
-  mx::StreamOrDevice s = {};
-  if (info.Length() == 1 || info[1].IsUndefined()) {
+  try {
+    mx::array a = NapiToArray(info[0]);
+    bool keepdims = false;
+    mx::StreamOrDevice s = {};
+    if (info.Length() == 1 || info[1].IsUndefined()) {
+      return ArrayToNapi(env, mx::mean(a, keepdims, s));
+    }
+    if (info[1].IsNumber()) {
+      int axis = info[1].As<Napi::Number>().Int32Value();
+      if (info.Length() > 2 && info[2].IsBoolean()) {
+        keepdims = info[2].As<Napi::Boolean>().Value();
+      }
+      return ArrayToNapi(env, mx::mean(a, axis, keepdims, s));
+    }
+    if (info[1].IsArray()) {
+      std::vector<int> axes = NapiToVecInt(info[1]);
+      if (info.Length() > 2 && info[2].IsBoolean()) {
+        keepdims = info[2].As<Napi::Boolean>().Value();
+      }
+      return ArrayToNapi(env, mx::mean(a, axes, keepdims, s));
+    }
     return ArrayToNapi(env, mx::mean(a, keepdims, s));
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
   }
-  if (info[1].IsNumber()) {
-    int axis = info[1].As<Napi::Number>().Int32Value();
-    if (info.Length() > 2 && info[2].IsBoolean()) {
-      keepdims = info[2].As<Napi::Boolean>().Value();
-    }
-    return ArrayToNapi(env, mx::mean(a, axis, keepdims, s));
-  }
-  if (info[1].IsArray()) {
-    std::vector<int> axes = NapiToVecInt(info[1]);
-    if (info.Length() > 2 && info[2].IsBoolean()) {
-      keepdims = info[2].As<Napi::Boolean>().Value();
-    }
-    return ArrayToNapi(env, mx::mean(a, axes, keepdims, s));
-  }
-  return ArrayToNapi(env, mx::mean(a, keepdims, s));
 }
 
 Napi::Value Wrap_median(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  mx::array a = NapiToArray(info[0]);
-  bool keepdims = false;
-  mx::StreamOrDevice s = {};
-  if (info.Length() == 1 || info[1].IsUndefined()) {
+  try {
+    mx::array a = NapiToArray(info[0]);
+    bool keepdims = false;
+    mx::StreamOrDevice s = {};
+    if (info.Length() == 1 || info[1].IsUndefined()) {
+      return ArrayToNapi(env, mx::median(a, keepdims, s));
+    }
+    if (info[1].IsNumber()) {
+      int axis = info[1].As<Napi::Number>().Int32Value();
+      if (info.Length() > 2 && info[2].IsBoolean()) {
+        keepdims = info[2].As<Napi::Boolean>().Value();
+      }
+      return ArrayToNapi(env, mx::median(a, axis, keepdims, s));
+    }
+    if (info[1].IsArray()) {
+      std::vector<int> axes = NapiToVecInt(info[1]);
+      if (info.Length() > 2 && info[2].IsBoolean()) {
+        keepdims = info[2].As<Napi::Boolean>().Value();
+      }
+      return ArrayToNapi(env, mx::median(a, axes, keepdims, s));
+    }
     return ArrayToNapi(env, mx::median(a, keepdims, s));
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
   }
-  if (info[1].IsNumber()) {
-    int axis = info[1].As<Napi::Number>().Int32Value();
-    if (info.Length() > 2 && info[2].IsBoolean()) {
-      keepdims = info[2].As<Napi::Boolean>().Value();
-    }
-    return ArrayToNapi(env, mx::median(a, axis, keepdims, s));
-  }
-  if (info[1].IsArray()) {
-    std::vector<int> axes = NapiToVecInt(info[1]);
-    if (info.Length() > 2 && info[2].IsBoolean()) {
-      keepdims = info[2].As<Napi::Boolean>().Value();
-    }
-    return ArrayToNapi(env, mx::median(a, axes, keepdims, s));
-  }
-  return ArrayToNapi(env, mx::median(a, keepdims, s));
 }
 
 Napi::Value Wrap_var(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  mx::array a = NapiToArray(info[0]);
-  bool keepdims = false;
-  int ddof = 0;
-  mx::StreamOrDevice s = {};
-  if (info.Length() == 1 || info[1].IsUndefined()) {
+  try {
+    mx::array a = NapiToArray(info[0]);
+    bool keepdims = false;
+    int ddof = 0;
+    mx::StreamOrDevice s = {};
+    if (info.Length() == 1 || info[1].IsUndefined()) {
+      return ArrayToNapi(env, mx::var(a, keepdims, ddof, s));
+    }
+    if (info[1].IsNumber()) {
+      int axis = info[1].As<Napi::Number>().Int32Value();
+      if (info.Length() > 2 && info[2].IsBoolean()) {
+        keepdims = info[2].As<Napi::Boolean>().Value();
+      }
+      if (info.Length() > 3 && info[3].IsNumber()) {
+        ddof = info[3].As<Napi::Number>().Int32Value();
+      }
+      return ArrayToNapi(env, mx::var(a, axis, keepdims, ddof, s));
+    }
+    if (info[1].IsArray()) {
+      std::vector<int> axes = NapiToVecInt(info[1]);
+      if (info.Length() > 2 && info[2].IsBoolean()) {
+        keepdims = info[2].As<Napi::Boolean>().Value();
+      }
+      if (info.Length() > 3 && info[3].IsNumber()) {
+        ddof = info[3].As<Napi::Number>().Int32Value();
+      }
+      return ArrayToNapi(env, mx::var(a, axes, keepdims, ddof, s));
+    }
     return ArrayToNapi(env, mx::var(a, keepdims, ddof, s));
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
   }
-  if (info[1].IsNumber()) {
-    int axis = info[1].As<Napi::Number>().Int32Value();
-    if (info.Length() > 2 && info[2].IsBoolean()) {
-      keepdims = info[2].As<Napi::Boolean>().Value();
-    }
-    if (info.Length() > 3 && info[3].IsNumber()) {
-      ddof = info[3].As<Napi::Number>().Int32Value();
-    }
-    return ArrayToNapi(env, mx::var(a, axis, keepdims, ddof, s));
-  }
-  if (info[1].IsArray()) {
-    std::vector<int> axes = NapiToVecInt(info[1]);
-    if (info.Length() > 2 && info[2].IsBoolean()) {
-      keepdims = info[2].As<Napi::Boolean>().Value();
-    }
-    if (info.Length() > 3 && info[3].IsNumber()) {
-      ddof = info[3].As<Napi::Number>().Int32Value();
-    }
-    return ArrayToNapi(env, mx::var(a, axes, keepdims, ddof, s));
-  }
-  return ArrayToNapi(env, mx::var(a, keepdims, ddof, s));
 }
 
 Napi::Value Wrap_std(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  mx::array a = NapiToArray(info[0]);
-  bool keepdims = false;
-  int ddof = 0;
-  mx::StreamOrDevice s = {};
-  if (info.Length() == 1 || info[1].IsUndefined()) {
+  try {
+    mx::array a = NapiToArray(info[0]);
+    bool keepdims = false;
+    int ddof = 0;
+    mx::StreamOrDevice s = {};
+    if (info.Length() == 1 || info[1].IsUndefined()) {
+      return ArrayToNapi(env, mx::std(a, keepdims, ddof, s));
+    }
+    if (info[1].IsNumber()) {
+      int axis = info[1].As<Napi::Number>().Int32Value();
+      if (info.Length() > 2 && info[2].IsBoolean()) {
+        keepdims = info[2].As<Napi::Boolean>().Value();
+      }
+      if (info.Length() > 3 && info[3].IsNumber()) {
+        ddof = info[3].As<Napi::Number>().Int32Value();
+      }
+      return ArrayToNapi(env, mx::std(a, axis, keepdims, ddof, s));
+    }
+    if (info[1].IsArray()) {
+      std::vector<int> axes = NapiToVecInt(info[1]);
+      if (info.Length() > 2 && info[2].IsBoolean()) {
+        keepdims = info[2].As<Napi::Boolean>().Value();
+      }
+      if (info.Length() > 3 && info[3].IsNumber()) {
+        ddof = info[3].As<Napi::Number>().Int32Value();
+      }
+      return ArrayToNapi(env, mx::std(a, axes, keepdims, ddof, s));
+    }
     return ArrayToNapi(env, mx::std(a, keepdims, ddof, s));
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
   }
-  if (info[1].IsNumber()) {
-    int axis = info[1].As<Napi::Number>().Int32Value();
-    if (info.Length() > 2 && info[2].IsBoolean()) {
-      keepdims = info[2].As<Napi::Boolean>().Value();
-    }
-    if (info.Length() > 3 && info[3].IsNumber()) {
-      ddof = info[3].As<Napi::Number>().Int32Value();
-    }
-    return ArrayToNapi(env, mx::std(a, axis, keepdims, ddof, s));
-  }
-  if (info[1].IsArray()) {
-    std::vector<int> axes = NapiToVecInt(info[1]);
-    if (info.Length() > 2 && info[2].IsBoolean()) {
-      keepdims = info[2].As<Napi::Boolean>().Value();
-    }
-    if (info.Length() > 3 && info[3].IsNumber()) {
-      ddof = info[3].As<Napi::Number>().Int32Value();
-    }
-    return ArrayToNapi(env, mx::std(a, axes, keepdims, ddof, s));
-  }
-  return ArrayToNapi(env, mx::std(a, keepdims, ddof, s));
 }
 
 Napi::Value Wrap_split(const Napi::CallbackInfo& info) {
@@ -1553,40 +1969,60 @@ Napi::Value Wrap_split(const Napi::CallbackInfo& info) {
   mx::array a = NapiToArray(info[0]);
   int num_splits = info[1].As<Napi::Number>().Int32Value();
   mx::StreamOrDevice s = {};
-  std::vector<mx::array> result = mx::split(a, num_splits, s);
-  return VecArrayToNapi(env, result);
+  try {
+    std::vector<mx::array> result = mx::split(a, num_splits, s);
+    return VecArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_argmin(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::argmin(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::argmin(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_argmax(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::argmax(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::argmax(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_sort(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::sort(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::sort(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_argsort(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::argsort(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::argsort(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_partition(const Napi::CallbackInfo& info) {
@@ -1594,8 +2030,12 @@ Napi::Value Wrap_partition(const Napi::CallbackInfo& info) {
   mx::array a = NapiToArray(info[0]);
   int kth = info[1].As<Napi::Number>().Int32Value();
   mx::StreamOrDevice s = {};
-  mx::array result = mx::partition(a, kth, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::partition(a, kth, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_argpartition(const Napi::CallbackInfo& info) {
@@ -1603,8 +2043,12 @@ Napi::Value Wrap_argpartition(const Napi::CallbackInfo& info) {
   mx::array a = NapiToArray(info[0]);
   int kth = info[1].As<Napi::Number>().Int32Value();
   mx::StreamOrDevice s = {};
-  mx::array result = mx::argpartition(a, kth, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::argpartition(a, kth, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_topk(const Napi::CallbackInfo& info) {
@@ -1612,8 +2056,12 @@ Napi::Value Wrap_topk(const Napi::CallbackInfo& info) {
   mx::array a = NapiToArray(info[0]);
   int k = info[1].As<Napi::Number>().Int32Value();
   mx::StreamOrDevice s = {};
-  mx::array result = mx::topk(a, k, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::topk(a, k, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_broadcast_to(const Napi::CallbackInfo& info) {
@@ -1621,16 +2069,24 @@ Napi::Value Wrap_broadcast_to(const Napi::CallbackInfo& info) {
   mx::array a = NapiToArray(info[0]);
   mx::Shape shape = NapiToShape(info[1]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::broadcast_to(a, shape, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::broadcast_to(a, shape, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_broadcast_arrays(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   std::vector<mx::array> inputs = NapiToVecArray(info[0]);
   mx::StreamOrDevice s = {};
-  std::vector<mx::array> result = mx::broadcast_arrays(inputs, s);
-  return VecArrayToNapi(env, result);
+  try {
+    std::vector<mx::array> result = mx::broadcast_arrays(inputs, s);
+    return VecArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_softmax(const Napi::CallbackInfo& info) {
@@ -1639,16 +2095,24 @@ Napi::Value Wrap_softmax(const Napi::CallbackInfo& info) {
   bool precise =
       info.Length() > 1 && !info[1].IsUndefined() ? info[1].As<Napi::Boolean>().Value() : false;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::softmax(a, precise, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::softmax(a, precise, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_concatenate(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   std::vector<mx::array> arrays = NapiToVecArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::concatenate(arrays, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::concatenate(arrays, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 // concat: Not found in C++ headers
@@ -1656,8 +2120,12 @@ Napi::Value Wrap_stack(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   std::vector<mx::array> arrays = NapiToVecArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::stack(arrays, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::stack(arrays, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_meshgrid(const Napi::CallbackInfo& info) {
@@ -1668,8 +2136,12 @@ Napi::Value Wrap_meshgrid(const Napi::CallbackInfo& info) {
   std::string indexing =
       info.Length() > 2 && !info[2].IsUndefined() ? info[2].As<Napi::String>().Utf8Value() : "xy";
   mx::StreamOrDevice s = {};
-  std::vector<mx::array> result = mx::meshgrid(arrays, sparse, indexing, s);
-  return VecArrayToNapi(env, result);
+  try {
+    std::vector<mx::array> result = mx::meshgrid(arrays, sparse, indexing, s);
+    return VecArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_repeat(const Napi::CallbackInfo& info) {
@@ -1677,8 +2149,12 @@ Napi::Value Wrap_repeat(const Napi::CallbackInfo& info) {
   mx::array arr = NapiToArray(info[0]);
   int repeats = info[1].As<Napi::Number>().Int32Value();
   mx::StreamOrDevice s = {};
-  mx::array result = mx::repeat(arr, repeats, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::repeat(arr, repeats, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_clip(const Napi::CallbackInfo& info) {
@@ -1691,8 +2167,12 @@ Napi::Value Wrap_clip(const Napi::CallbackInfo& info) {
                                        ? std::optional<mx::array>(NapiToArray(info[2]))
                                        : std::nullopt;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::clip(a, a_min, a_max, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::clip(a, a_min, a_max, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 // pad: Not found in C++ headers
@@ -1703,8 +2183,12 @@ Napi::Value Wrap_as_strided(const Napi::CallbackInfo& info) {
   mx::Strides strides = NapiToStrides(info[2]);
   size_t offset = static_cast<size_t>(info[3].As<Napi::Number>().Int64Value());
   mx::StreamOrDevice s = {};
-  mx::array result = mx::as_strided(a, shape, strides, offset, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::as_strided(a, shape, strides, offset, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_cumsum(const Napi::CallbackInfo& info) {
@@ -1715,8 +2199,12 @@ Napi::Value Wrap_cumsum(const Napi::CallbackInfo& info) {
   bool inclusive =
       info.Length() > 2 && !info[2].IsUndefined() ? info[2].As<Napi::Boolean>().Value() : true;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::cumsum(a, reverse, inclusive, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::cumsum(a, reverse, inclusive, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_cumprod(const Napi::CallbackInfo& info) {
@@ -1727,8 +2215,12 @@ Napi::Value Wrap_cumprod(const Napi::CallbackInfo& info) {
   bool inclusive =
       info.Length() > 2 && !info[2].IsUndefined() ? info[2].As<Napi::Boolean>().Value() : true;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::cumprod(a, reverse, inclusive, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::cumprod(a, reverse, inclusive, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_cummax(const Napi::CallbackInfo& info) {
@@ -1739,8 +2231,12 @@ Napi::Value Wrap_cummax(const Napi::CallbackInfo& info) {
   bool inclusive =
       info.Length() > 2 && !info[2].IsUndefined() ? info[2].As<Napi::Boolean>().Value() : true;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::cummax(a, reverse, inclusive, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::cummax(a, reverse, inclusive, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_cummin(const Napi::CallbackInfo& info) {
@@ -1751,8 +2247,12 @@ Napi::Value Wrap_cummin(const Napi::CallbackInfo& info) {
   bool inclusive =
       info.Length() > 2 && !info[2].IsUndefined() ? info[2].As<Napi::Boolean>().Value() : true;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::cummin(a, reverse, inclusive, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::cummin(a, reverse, inclusive, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 // conj: Not found in C++ headers
@@ -1760,8 +2260,12 @@ Napi::Value Wrap_conjugate(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::conjugate(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::conjugate(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 // convolve: Not found in C++ headers
@@ -1778,8 +2282,12 @@ Napi::Value Wrap_conv1d(const Napi::CallbackInfo& info) {
   int groups =
       info.Length() > 5 && !info[5].IsUndefined() ? info[5].As<Napi::Number>().Int32Value() : 1;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::conv1d(input, weight, stride, padding, dilation, groups, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::conv1d(input, weight, stride, padding, dilation, groups, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_conv2d(const Napi::CallbackInfo& info) {
@@ -1819,8 +2327,12 @@ Napi::Value Wrap_conv2d(const Napi::CallbackInfo& info) {
   int groups =
       info.Length() > 5 && !info[5].IsUndefined() ? info[5].As<Napi::Number>().Int32Value() : 1;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::conv2d(input, weight, stride, padding, dilation, groups, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::conv2d(input, weight, stride, padding, dilation, groups, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_conv3d(const Napi::CallbackInfo& info) {
@@ -1863,8 +2375,12 @@ Napi::Value Wrap_conv3d(const Napi::CallbackInfo& info) {
   int groups =
       info.Length() > 5 && !info[5].IsUndefined() ? info[5].As<Napi::Number>().Int32Value() : 1;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::conv3d(input, weight, stride, padding, dilation, groups, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::conv3d(input, weight, stride, padding, dilation, groups, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_conv_transpose1d(const Napi::CallbackInfo& info) {
@@ -1882,9 +2398,13 @@ Napi::Value Wrap_conv_transpose1d(const Napi::CallbackInfo& info) {
   int groups =
       info.Length() > 6 && !info[6].IsUndefined() ? info[6].As<Napi::Number>().Int32Value() : 1;
   mx::StreamOrDevice s = {};
-  mx::array result =
-      mx::conv_transpose1d(input, weight, stride, padding, dilation, output_padding, groups, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result =
+        mx::conv_transpose1d(input, weight, stride, padding, dilation, output_padding, groups, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_conv_transpose2d(const Napi::CallbackInfo& info) {
@@ -1934,9 +2454,13 @@ Napi::Value Wrap_conv_transpose2d(const Napi::CallbackInfo& info) {
   int groups =
       info.Length() > 6 && !info[6].IsUndefined() ? info[6].As<Napi::Number>().Int32Value() : 1;
   mx::StreamOrDevice s = {};
-  mx::array result =
-      mx::conv_transpose2d(input, weight, stride, padding, dilation, output_padding, groups, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result =
+        mx::conv_transpose2d(input, weight, stride, padding, dilation, output_padding, groups, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_conv_transpose3d(const Napi::CallbackInfo& info) {
@@ -1990,9 +2514,13 @@ Napi::Value Wrap_conv_transpose3d(const Napi::CallbackInfo& info) {
   int groups =
       info.Length() > 6 && !info[6].IsUndefined() ? info[6].As<Napi::Number>().Int32Value() : 1;
   mx::StreamOrDevice s = {};
-  mx::array result =
-      mx::conv_transpose3d(input, weight, stride, padding, dilation, output_padding, groups, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result =
+        mx::conv_transpose3d(input, weight, stride, padding, dilation, output_padding, groups, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_conv_general(const Napi::CallbackInfo& info) {
@@ -2014,9 +2542,13 @@ Napi::Value Wrap_conv_general(const Napi::CallbackInfo& info) {
   bool flip =
       info.Length() > 8 && !info[8].IsUndefined() ? info[8].As<Napi::Boolean>().Value() : false;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::conv_general(input, weight, stride, padding_lo, padding_hi,
-                                      kernel_dilation, input_dilation, groups, flip, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::conv_general(input, weight, stride, padding_lo, padding_hi,
+                                        kernel_dilation, input_dilation, groups, flip, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 // save: Not found in C++ headers
@@ -2031,8 +2563,12 @@ Napi::Value Wrap_where(const Napi::CallbackInfo& info) {
   mx::array x = NapiToArray(info[1]);
   mx::array y = NapiToArray(info[2]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::where(condition, x, y, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::where(condition, x, y, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_nan_to_num(const Napi::CallbackInfo& info) {
@@ -2047,16 +2583,24 @@ Napi::Value Wrap_nan_to_num(const Napi::CallbackInfo& info) {
                                     ? std::optional<float>(info[3].As<Napi::Number>().FloatValue())
                                     : std::nullopt;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::nan_to_num(a, nan, posinf, neginf, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::nan_to_num(a, nan, posinf, neginf, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_round(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::round(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::round(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_quantized_matmul(const Napi::CallbackInfo& info) {
@@ -2079,9 +2623,13 @@ Napi::Value Wrap_quantized_matmul(const Napi::CallbackInfo& info) {
                          ? info[7].As<Napi::String>().Utf8Value()
                          : "affine";
   mx::StreamOrDevice s = {};
-  mx::array result =
-      mx::quantized_matmul(x, w, scales, biases, transpose, group_size, bits, mode, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result =
+        mx::quantized_matmul(x, w, scales, biases, transpose, group_size, bits, mode, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_quantize(const Napi::CallbackInfo& info) {
@@ -2097,8 +2645,12 @@ Napi::Value Wrap_quantize(const Napi::CallbackInfo& info) {
                          ? info[3].As<Napi::String>().Utf8Value()
                          : "affine";
   mx::StreamOrDevice s = {};
-  std::vector<mx::array> result = mx::quantize(w, group_size, bits, mode, s);
-  return VecArrayToNapi(env, result);
+  try {
+    std::vector<mx::array> result = mx::quantize(w, group_size, bits, mode, s);
+    return VecArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_dequantize(const Napi::CallbackInfo& info) {
@@ -2121,8 +2673,12 @@ Napi::Value Wrap_dequantize(const Napi::CallbackInfo& info) {
                                        ? std::optional<mx::Dtype>(NapiToDtype(info[6]))
                                        : std::nullopt;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::dequantize(w, scales, biases, group_size, bits, mode, dtype, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::dequantize(w, scales, biases, group_size, bits, mode, dtype, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_gather_qmm(const Napi::CallbackInfo& info) {
@@ -2155,9 +2711,13 @@ Napi::Value Wrap_gather_qmm(const Napi::CallbackInfo& info) {
   bool sorted_indices =
       info.Length() > 10 && !info[10].IsUndefined() ? info[10].As<Napi::Boolean>().Value() : false;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::gather_qmm(x, w, scales, biases, lhs_indices, rhs_indices, transpose,
-                                    group_size, bits, mode, sorted_indices, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::gather_qmm(x, w, scales, biases, lhs_indices, rhs_indices, transpose,
+                                      group_size, bits, mode, sorted_indices, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_segmented_mm(const Napi::CallbackInfo& info) {
@@ -2166,8 +2726,12 @@ Napi::Value Wrap_segmented_mm(const Napi::CallbackInfo& info) {
   mx::array b = NapiToArray(info[1]);
   mx::array segments = NapiToArray(info[2]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::segmented_mm(a, b, segments, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::segmented_mm(a, b, segments, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_tensordot(const Napi::CallbackInfo& info) {
@@ -2177,8 +2741,12 @@ Napi::Value Wrap_tensordot(const Napi::CallbackInfo& info) {
   int axis =
       info.Length() > 2 && !info[2].IsUndefined() ? info[2].As<Napi::Number>().Int32Value() : 2;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::tensordot(a, b, axis, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::tensordot(a, b, axis, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_inner(const Napi::CallbackInfo& info) {
@@ -2186,8 +2754,12 @@ Napi::Value Wrap_inner(const Napi::CallbackInfo& info) {
   mx::array a = NapiToArray(info[0]);
   mx::array b = NapiToArray(info[1]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::inner(a, b, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::inner(a, b, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_outer(const Napi::CallbackInfo& info) {
@@ -2195,8 +2767,12 @@ Napi::Value Wrap_outer(const Napi::CallbackInfo& info) {
   mx::array a = NapiToArray(info[0]);
   mx::array b = NapiToArray(info[1]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::outer(a, b, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::outer(a, b, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_tile(const Napi::CallbackInfo& info) {
@@ -2204,8 +2780,12 @@ Napi::Value Wrap_tile(const Napi::CallbackInfo& info) {
   mx::array arr = NapiToArray(info[0]);
   std::vector<int> reps = NapiToVecInt(info[1]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::tile(arr, reps, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::tile(arr, reps, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_addmm(const Napi::CallbackInfo& info) {
@@ -2218,8 +2798,12 @@ Napi::Value Wrap_addmm(const Napi::CallbackInfo& info) {
   double beta =
       info.Length() > 4 && !info[4].IsUndefined() ? info[4].As<Napi::Number>().DoubleValue() : 1.f;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::addmm(c, a, b, alpha, beta, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::addmm(c, a, b, alpha, beta, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_block_masked_mm(const Napi::CallbackInfo& info) {
@@ -2240,8 +2824,12 @@ Napi::Value Wrap_block_masked_mm(const Napi::CallbackInfo& info) {
           ? std::optional<mx::array>(NapiToArray(info[5]))
           : std::nullopt;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::block_masked_mm(a, b, block_size, mask_out, mask_lhs, mask_rhs, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::block_masked_mm(a, b, block_size, mask_out, mask_lhs, mask_rhs, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_gather_mm(const Napi::CallbackInfo& info) {
@@ -2259,8 +2847,12 @@ Napi::Value Wrap_gather_mm(const Napi::CallbackInfo& info) {
   bool sorted_indices =
       info.Length() > 4 && !info[4].IsUndefined() ? info[4].As<Napi::Boolean>().Value() : false;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::gather_mm(a, b, lhs_indices, rhs_indices, sorted_indices, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::gather_mm(a, b, lhs_indices, rhs_indices, sorted_indices, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_diagonal(const Napi::CallbackInfo& info) {
@@ -2273,8 +2865,12 @@ Napi::Value Wrap_diagonal(const Napi::CallbackInfo& info) {
   int axis2 =
       info.Length() > 3 && !info[3].IsUndefined() ? info[3].As<Napi::Number>().Int32Value() : 1;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::diagonal(a, offset, axis1, axis2, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::diagonal(a, offset, axis1, axis2, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_diag(const Napi::CallbackInfo& info) {
@@ -2282,40 +2878,60 @@ Napi::Value Wrap_diag(const Napi::CallbackInfo& info) {
   mx::array a = NapiToArray(info[0]);
   int k = info.Length() > 1 && !info[1].IsUndefined() ? info[1].As<Napi::Number>().Int32Value() : 0;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::diag(a, k, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::diag(a, k, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_trace(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::trace(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::trace(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_atleast_1d(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::atleast_1d(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::atleast_1d(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_atleast_2d(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::atleast_2d(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::atleast_2d(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_atleast_3d(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::atleast_3d(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::atleast_3d(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 // issubdtype: Not found in C++ headers
@@ -2324,8 +2940,12 @@ Napi::Value Wrap_bitwise_and(const Napi::CallbackInfo& info) {
   mx::array a = NapiToArray(info[0]);
   mx::array b = NapiToArray(info[1]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::bitwise_and(a, b, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::bitwise_and(a, b, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_bitwise_or(const Napi::CallbackInfo& info) {
@@ -2333,8 +2953,12 @@ Napi::Value Wrap_bitwise_or(const Napi::CallbackInfo& info) {
   mx::array a = NapiToArray(info[0]);
   mx::array b = NapiToArray(info[1]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::bitwise_or(a, b, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::bitwise_or(a, b, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_bitwise_xor(const Napi::CallbackInfo& info) {
@@ -2342,8 +2966,12 @@ Napi::Value Wrap_bitwise_xor(const Napi::CallbackInfo& info) {
   mx::array a = NapiToArray(info[0]);
   mx::array b = NapiToArray(info[1]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::bitwise_xor(a, b, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::bitwise_xor(a, b, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_left_shift(const Napi::CallbackInfo& info) {
@@ -2351,8 +2979,12 @@ Napi::Value Wrap_left_shift(const Napi::CallbackInfo& info) {
   mx::array a = NapiToArray(info[0]);
   mx::array b = NapiToArray(info[1]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::left_shift(a, b, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::left_shift(a, b, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_right_shift(const Napi::CallbackInfo& info) {
@@ -2360,16 +2992,24 @@ Napi::Value Wrap_right_shift(const Napi::CallbackInfo& info) {
   mx::array a = NapiToArray(info[0]);
   mx::array b = NapiToArray(info[1]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::right_shift(a, b, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::right_shift(a, b, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_bitwise_invert(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::bitwise_invert(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::bitwise_invert(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_view(const Napi::CallbackInfo& info) {
@@ -2377,8 +3017,12 @@ Napi::Value Wrap_view(const Napi::CallbackInfo& info) {
   mx::array a = NapiToArray(info[0]);
   mx::Dtype dtype = NapiToDtype(info[1]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::view(a, dtype, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::view(a, dtype, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_hadamard_transform(const Napi::CallbackInfo& info) {
@@ -2388,8 +3032,12 @@ Napi::Value Wrap_hadamard_transform(const Napi::CallbackInfo& info) {
                                    ? std::optional<float>(info[1].As<Napi::Number>().FloatValue())
                                    : std::nullopt;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::hadamard_transform(a, scale, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::hadamard_transform(a, scale, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 // einsum_path: Not found in C++ headers
@@ -2399,24 +3047,36 @@ Napi::Value Wrap_roll(const Napi::CallbackInfo& info) {
   mx::array a = NapiToArray(info[0]);
   int shift = info[1].As<Napi::Number>().Int32Value();
   mx::StreamOrDevice s = {};
-  mx::array result = mx::roll(a, shift, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::roll(a, shift, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_real(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::real(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::real(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_imag(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::imag(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::imag(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_slice(const Napi::CallbackInfo& info) {
@@ -2425,8 +3085,12 @@ Napi::Value Wrap_slice(const Napi::CallbackInfo& info) {
   mx::Shape start = NapiToShape(info[1]);
   mx::Shape stop = NapiToShape(info[2]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::slice(a, start, stop, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::slice(a, start, stop, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_slice_update(const Napi::CallbackInfo& info) {
@@ -2436,8 +3100,12 @@ Napi::Value Wrap_slice_update(const Napi::CallbackInfo& info) {
   mx::Shape start = NapiToShape(info[2]);
   mx::Shape stop = NapiToShape(info[3]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::slice_update(src, update, start, stop, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::slice_update(src, update, start, stop, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_contiguous(const Napi::CallbackInfo& info) {
@@ -2446,8 +3114,12 @@ Napi::Value Wrap_contiguous(const Napi::CallbackInfo& info) {
   bool allow_col_major =
       info.Length() > 1 && !info[1].IsUndefined() ? info[1].As<Napi::Boolean>().Value() : false;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::contiguous(a, allow_col_major, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::contiguous(a, allow_col_major, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 // broadcast_shapes: Not found in C++ headers
@@ -2455,8 +3127,12 @@ Napi::Value Wrap_depends(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   std::vector<mx::array> inputs = NapiToVecArray(info[0]);
   std::vector<mx::array> dependencies = NapiToVecArray(info[1]);
-  std::vector<mx::array> result = mx::depends(inputs, dependencies);
-  return VecArrayToNapi(env, result);
+  try {
+    std::vector<mx::array> result = mx::depends(inputs, dependencies);
+    return VecArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_qqmm(const Napi::CallbackInfo& info) {
@@ -2477,8 +3153,12 @@ Napi::Value Wrap_qqmm(const Napi::CallbackInfo& info) {
                          ? info[5].As<Napi::String>().Utf8Value()
                          : "nvfp4";
   mx::StreamOrDevice s = {};
-  mx::array result = mx::qqmm(x, w, w_scales, group_size, bits, mode, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::qqmm(x, w, w_scales, group_size, bits, mode, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_norm(const Napi::CallbackInfo& info) {
@@ -2491,8 +3171,12 @@ Napi::Value Wrap_norm(const Napi::CallbackInfo& info) {
   bool keepdims =
       info.Length() > 2 && !info[2].IsUndefined() ? info[2].As<Napi::Boolean>().Value() : false;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::linalg::norm(a, axis, keepdims, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::linalg::norm(a, axis, keepdims, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 // qr: Not found in C++ headers
@@ -2500,16 +3184,24 @@ Napi::Value Wrap_svd(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  std::vector<mx::array> result = mx::linalg::svd(a, s);
-  return VecArrayToNapi(env, result);
+  try {
+    std::vector<mx::array> result = mx::linalg::svd(a, s);
+    return VecArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_inv(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::linalg::inv(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::linalg::inv(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_tri_inv(const Napi::CallbackInfo& info) {
@@ -2518,8 +3210,12 @@ Napi::Value Wrap_tri_inv(const Napi::CallbackInfo& info) {
   bool upper =
       info.Length() > 1 && !info[1].IsUndefined() ? info[1].As<Napi::Boolean>().Value() : false;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::linalg::tri_inv(a, upper, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::linalg::tri_inv(a, upper, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_cholesky(const Napi::CallbackInfo& info) {
@@ -2528,8 +3224,12 @@ Napi::Value Wrap_cholesky(const Napi::CallbackInfo& info) {
   bool upper =
       info.Length() > 1 && !info[1].IsUndefined() ? info[1].As<Napi::Boolean>().Value() : false;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::linalg::cholesky(a, upper, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::linalg::cholesky(a, upper, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_cholesky_inv(const Napi::CallbackInfo& info) {
@@ -2538,16 +3238,24 @@ Napi::Value Wrap_cholesky_inv(const Napi::CallbackInfo& info) {
   bool upper =
       info.Length() > 1 && !info[1].IsUndefined() ? info[1].As<Napi::Boolean>().Value() : false;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::linalg::cholesky_inv(a, upper, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::linalg::cholesky_inv(a, upper, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_pinv(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::linalg::pinv(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::linalg::pinv(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_cross(const Napi::CallbackInfo& info) {
@@ -2557,16 +3265,24 @@ Napi::Value Wrap_cross(const Napi::CallbackInfo& info) {
   int axis =
       info.Length() > 2 && !info[2].IsUndefined() ? info[2].As<Napi::Number>().Int32Value() : -1;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::linalg::cross(a, b, axis, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::linalg::cross(a, b, axis, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_eigvals(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::linalg::eigvals(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::linalg::eigvals(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 // eig: Not found in C++ headers
@@ -2576,8 +3292,12 @@ Napi::Value Wrap_eigvalsh(const Napi::CallbackInfo& info) {
   std::string UPLO =
       info.Length() > 1 && !info[1].IsUndefined() ? info[1].As<Napi::String>().Utf8Value() : "L";
   mx::StreamOrDevice s = {};
-  mx::array result = mx::linalg::eigvalsh(a, UPLO, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::linalg::eigvalsh(a, UPLO, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 // eigh: Not found in C++ headers
@@ -2585,8 +3305,12 @@ Napi::Value Wrap_lu(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  std::vector<mx::array> result = mx::linalg::lu(a, s);
-  return VecArrayToNapi(env, result);
+  try {
+    std::vector<mx::array> result = mx::linalg::lu(a, s);
+    return VecArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 // lu_factor: Not found in C++ headers
@@ -2595,8 +3319,12 @@ Napi::Value Wrap_solve(const Napi::CallbackInfo& info) {
   mx::array a = NapiToArray(info[0]);
   mx::array b = NapiToArray(info[1]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::linalg::solve(a, b, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::linalg::solve(a, b, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_solve_triangular(const Napi::CallbackInfo& info) {
@@ -2606,8 +3334,12 @@ Napi::Value Wrap_solve_triangular(const Napi::CallbackInfo& info) {
   bool upper =
       info.Length() > 2 && !info[2].IsUndefined() ? info[2].As<Napi::Boolean>().Value() : false;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::linalg::solve_triangular(a, b, upper, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::linalg::solve_triangular(a, b, upper, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_fft(const Napi::CallbackInfo& info) {
@@ -2616,8 +3348,12 @@ Napi::Value Wrap_fft(const Napi::CallbackInfo& info) {
   int axis =
       info.Length() > 1 && !info[1].IsUndefined() ? info[1].As<Napi::Number>().Int32Value() : -1;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::fft::fft(a, axis, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::fft::fft(a, axis, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_ifft(const Napi::CallbackInfo& info) {
@@ -2626,8 +3362,12 @@ Napi::Value Wrap_ifft(const Napi::CallbackInfo& info) {
   int axis =
       info.Length() > 1 && !info[1].IsUndefined() ? info[1].As<Napi::Number>().Int32Value() : -1;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::fft::ifft(a, axis, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::fft::ifft(a, axis, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_fft2(const Napi::CallbackInfo& info) {
@@ -2636,8 +3376,12 @@ Napi::Value Wrap_fft2(const Napi::CallbackInfo& info) {
   std::vector<int> axes = info.Length() > 1 && !info[1].IsUndefined() ? NapiToVecInt(info[1])
                                                                       : std::vector<int>{-2, -1};
   mx::StreamOrDevice s = {};
-  mx::array result = mx::fft::fft2(a, axes, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::fft::fft2(a, axes, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_ifft2(const Napi::CallbackInfo& info) {
@@ -2646,24 +3390,36 @@ Napi::Value Wrap_ifft2(const Napi::CallbackInfo& info) {
   std::vector<int> axes = info.Length() > 1 && !info[1].IsUndefined() ? NapiToVecInt(info[1])
                                                                       : std::vector<int>{-2, -1};
   mx::StreamOrDevice s = {};
-  mx::array result = mx::fft::ifft2(a, axes, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::fft::ifft2(a, axes, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_fftn(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::fft::fftn(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::fft::fftn(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_ifftn(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::fft::ifftn(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::fft::ifftn(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_rfft(const Napi::CallbackInfo& info) {
@@ -2672,8 +3428,12 @@ Napi::Value Wrap_rfft(const Napi::CallbackInfo& info) {
   int axis =
       info.Length() > 1 && !info[1].IsUndefined() ? info[1].As<Napi::Number>().Int32Value() : -1;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::fft::rfft(a, axis, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::fft::rfft(a, axis, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_irfft(const Napi::CallbackInfo& info) {
@@ -2682,8 +3442,12 @@ Napi::Value Wrap_irfft(const Napi::CallbackInfo& info) {
   int axis =
       info.Length() > 1 && !info[1].IsUndefined() ? info[1].As<Napi::Number>().Int32Value() : -1;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::fft::irfft(a, axis, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::fft::irfft(a, axis, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_rfft2(const Napi::CallbackInfo& info) {
@@ -2692,8 +3456,12 @@ Napi::Value Wrap_rfft2(const Napi::CallbackInfo& info) {
   std::vector<int> axes = info.Length() > 1 && !info[1].IsUndefined() ? NapiToVecInt(info[1])
                                                                       : std::vector<int>{-2, -1};
   mx::StreamOrDevice s = {};
-  mx::array result = mx::fft::rfft2(a, axes, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::fft::rfft2(a, axes, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_irfft2(const Napi::CallbackInfo& info) {
@@ -2702,54 +3470,82 @@ Napi::Value Wrap_irfft2(const Napi::CallbackInfo& info) {
   std::vector<int> axes = info.Length() > 1 && !info[1].IsUndefined() ? NapiToVecInt(info[1])
                                                                       : std::vector<int>{-2, -1};
   mx::StreamOrDevice s = {};
-  mx::array result = mx::fft::irfft2(a, axes, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::fft::irfft2(a, axes, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_rfftn(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::fft::rfftn(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::fft::rfftn(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_irfftn(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::fft::irfftn(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::fft::irfftn(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_fftshift(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::fft::fftshift(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::fft::fftshift(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_ifftshift(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   mx::array a = NapiToArray(info[0]);
   mx::StreamOrDevice s = {};
-  mx::array result = mx::fft::ifftshift(a, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::fft::ifftshift(a, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_seed(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   uint64_t seed = static_cast<uint64_t>(info[0].As<Napi::Number>().Int64Value());
-  mx::random::seed(seed);
-  return env.Undefined();
+  try {
+    mx::random::seed(seed);
+    return env.Undefined();
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_key(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   uint64_t seed = static_cast<uint64_t>(info[0].As<Napi::Number>().Int64Value());
-  mx::array result = mx::random::key(seed);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::random::key(seed);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_uniform(const Napi::CallbackInfo& info) {
@@ -2759,8 +3555,12 @@ Napi::Value Wrap_uniform(const Napi::CallbackInfo& info) {
                                      ? std::optional<mx::array>(NapiToArray(info[1]))
                                      : std::nullopt;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::random::uniform(shape, key, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::random::uniform(shape, key, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_normal(const Napi::CallbackInfo& info) {
@@ -2770,8 +3570,12 @@ Napi::Value Wrap_normal(const Napi::CallbackInfo& info) {
                                      ? std::optional<mx::array>(NapiToArray(info[1]))
                                      : std::nullopt;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::random::normal(shape, key, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::random::normal(shape, key, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_multivariate_normal(const Napi::CallbackInfo& info) {
@@ -2784,8 +3588,12 @@ Napi::Value Wrap_multivariate_normal(const Napi::CallbackInfo& info) {
                                      ? std::optional<mx::array>(NapiToArray(info[4]))
                                      : std::nullopt;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::random::multivariate_normal(mean, cov, shape, dtype, key, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::random::multivariate_normal(mean, cov, shape, dtype, key, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_randint(const Napi::CallbackInfo& info) {
@@ -2798,8 +3606,12 @@ Napi::Value Wrap_randint(const Napi::CallbackInfo& info) {
                                      ? std::optional<mx::array>(NapiToArray(info[4]))
                                      : std::nullopt;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::random::randint(low, high, shape, dtype, key, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::random::randint(low, high, shape, dtype, key, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_bernoulli(const Napi::CallbackInfo& info) {
@@ -2808,8 +3620,12 @@ Napi::Value Wrap_bernoulli(const Napi::CallbackInfo& info) {
                                      ? std::optional<mx::array>(NapiToArray(info[0]))
                                      : std::nullopt;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::random::bernoulli(key, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::random::bernoulli(key, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_truncated_normal(const Napi::CallbackInfo& info) {
@@ -2822,8 +3638,12 @@ Napi::Value Wrap_truncated_normal(const Napi::CallbackInfo& info) {
                                      ? std::optional<mx::array>(NapiToArray(info[3]))
                                      : std::nullopt;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::random::truncated_normal(lower, upper, dtype, key, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::random::truncated_normal(lower, upper, dtype, key, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_gumbel(const Napi::CallbackInfo& info) {
@@ -2835,8 +3655,12 @@ Napi::Value Wrap_gumbel(const Napi::CallbackInfo& info) {
                                      ? std::optional<mx::array>(NapiToArray(info[2]))
                                      : std::nullopt;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::random::gumbel(shape, dtype, key, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::random::gumbel(shape, dtype, key, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_categorical(const Napi::CallbackInfo& info) {
@@ -2848,8 +3672,12 @@ Napi::Value Wrap_categorical(const Napi::CallbackInfo& info) {
                                      ? std::optional<mx::array>(NapiToArray(info[2]))
                                      : std::nullopt;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::random::categorical(logits, axis, key, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::random::categorical(logits, axis, key, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_laplace(const Napi::CallbackInfo& info) {
@@ -2859,8 +3687,12 @@ Napi::Value Wrap_laplace(const Napi::CallbackInfo& info) {
                                      ? std::optional<mx::array>(NapiToArray(info[1]))
                                      : std::nullopt;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::random::laplace(shape, key, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::random::laplace(shape, key, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 Napi::Value Wrap_permutation(const Napi::CallbackInfo& info) {
@@ -2872,8 +3704,12 @@ Napi::Value Wrap_permutation(const Napi::CallbackInfo& info) {
                                      ? std::optional<mx::array>(NapiToArray(info[2]))
                                      : std::nullopt;
   mx::StreamOrDevice s = {};
-  mx::array result = mx::random::permutation(x, axis, key, s);
-  return ArrayToNapi(env, result);
+  try {
+    mx::array result = mx::random::permutation(x, axis, key, s);
+    return ArrayToNapi(env, result);
+  } catch (const std::exception& e) {
+    throw Napi::Error::New(env, e.what());
+  }
 }
 
 // ============================================================================

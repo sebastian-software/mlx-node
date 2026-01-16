@@ -82,7 +82,9 @@ export type StatementType =
   | 'for'
   | 'with'
   | 'if'
-  | 'return';
+  | 'return'
+  | 'function'
+  | 'del';
 
 export interface Statement {
   type: StatementType;
@@ -103,6 +105,9 @@ export interface Statement {
   condition?: string;
   // For with statements
   contextExpr?: string;
+  // For function definitions
+  funcName?: string;
+  funcParams?: string;
 }
 
 /**
@@ -252,6 +257,35 @@ function parseStatement(node: SyntaxNode, source: string): Statement | null {
     case 'ReturnStatement': {
       return { type: 'return', text, node };
     }
+
+    case 'FunctionDefinition': {
+      // Nested function definition
+      const funcNameNode = node.getChild('VariableName');
+      const paramsNode = node.getChild('ParamList');
+      const bodyNode = node.getChild('Body');
+
+      const funcName = funcNameNode ? source.slice(funcNameNode.from, funcNameNode.to) : undefined;
+      let funcParams = '';
+      if (paramsNode) {
+        // Get the content between ( and )
+        const paramsText = source.slice(paramsNode.from, paramsNode.to);
+        // Remove outer parens and 'self' parameter if present
+        funcParams = paramsText.slice(1, -1).replace(/^\s*self\s*,?\s*/, '').trim();
+      }
+
+      return {
+        type: 'function',
+        text,
+        node,
+        funcName,
+        funcParams,
+        children: bodyNode ? parseStatements(bodyNode, source) : [],
+      };
+    }
+
+    case 'DeleteStatement':
+      // del x -> comment out since JS has GC
+      return { type: 'del', text, node };
 
     case ':':
     case 'Comment':

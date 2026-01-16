@@ -2,11 +2,20 @@
  * Python to TypeScript Test Converter
  *
  * Converts MLX Python tests to TypeScript/Vitest format.
+ * Uses AST-based conversion via the ast-visitor module.
  */
 
 import { extractTests, parseStatements, Statement, TestClass, TestMethod } from './python-parser.js';
+import { convertExpression, visit, VisitorContext } from './ast-visitor.js';
+import { parser } from '@lezer/python';
+import {
+  evaluateNumpyExpressions,
+  extractNumpyExpressions,
+  isStaticNumpyExpression,
+  resultToTypeScript,
+} from './numpy-evaluator.js';
 
-// Python to TypeScript dtype mappings
+// Python to TypeScript dtype mappings (still used for some edge cases)
 const DTYPE_MAP: Record<string, string> = {
   'mx.bool_': "'bool'",
   'mx.uint8': "'uint8'",
@@ -24,7 +33,7 @@ const DTYPE_MAP: Record<string, string> = {
   'mx.complex64': "'complex64'",
 };
 
-// NumPy dtype mappings
+// NumPy dtype mappings (kept for fallback)
 const NP_DTYPE_MAP: Record<string, string> = {
   'np.bool_': "'bool'",
   'np.uint8': "'uint8'",
@@ -259,153 +268,71 @@ function convertSingleFuncCall(funcName: string, argsStr: string): string | null
 }
 
 /**
- * Convert Python expression to TypeScript
+ * Convert Python expression to TypeScript using AST-based conversion
  */
-export function pythonToTypeScript(code: string): string {
-  let ts = code;
+export function pythonToTypeScript(
+  code: string,
+  declaredVars?: Set<string>,
+  numpyValues?: Map<string, string>
+): string {
+  // Use the AST-based converter for the main transformation
+  try {
+    let ts = convertExpression(code, declaredVars, numpyValues);
 
-  // Replace dtype references
-  for (const [py, tsVal] of Object.entries(DTYPE_MAP)) {
-    ts = ts.replaceAll(py, tsVal);
+    // Post-processing for any edge cases the AST visitor might miss
+    // (These are gradually being moved into the AST visitor)
+
+    // Replace dtype references that might be in strings or complex expressions
+    // Only replace when not followed by a dot (to preserve mx.bool_.size etc.)
+    for (const [py, tsVal] of Object.entries(DTYPE_MAP)) {
+      // Use regex with negative lookahead to avoid replacing when followed by .
+      const escaped = py.replace(/\./g, '\\.');
+      const regex = new RegExp(escaped + '(?!\\.)', 'g');
+      ts = ts.replace(regex, tsVal);
+    }
+
+    // np.inf/nan as standalone references (not function calls)
+    ts = ts.replace(/\bnp\.inf\b/g, 'Infinity');
+    ts = ts.replace(/\bnp\.nan\b/g, 'NaN');
+
+    return ts;
+  } catch (error) {
+    // Fallback: return original code if AST parsing fails
+    console.warn('AST conversion failed for:', code, error);
+    return code;
   }
-
-  // Python tuple (1, 2) -> JS array [1, 2]
-  // Only convert tuples, not function call arguments
-  ts = ts.replace(/(?<![a-zA-Z0-9_])\((\d+),\)/g, '[$1]');
-  ts = ts.replace(/(?<![a-zA-Z0-9_])\((\d+(?:,\s*\d+)+)\)/g, (_, nums) => `[${nums}]`);
-
-  // Tuple of arrays/tuples: ((...), (...)) or ([...], [...]) -> [[...], [...]]
-  // This handles for-loop iterables like: for x in ((1,2), (3,4))
-  ts = ts.replace(/\(\s*(\[[^\]]+\](?:\s*,\s*\[[^\]]+\])*)\s*,?\s*\)/g, '[$1]');
-
-  // Empty tuple () -> empty array []
-  ts = ts.replace(/\.toBe\(\(\)\)/g, '.toEqual([])');
-  ts = ts.replace(/\.toEqual\(\(\)\)/g, '.toEqual([])');
-  // Standalone empty tuple (when it's the entire expression)
-  if (ts === '()') ts = '[]';
-
-  // Python True/False -> JS true/false
-  ts = ts.replace(/\bTrue\b/g, 'true');
-  ts = ts.replace(/\bFalse\b/g, 'false');
-
-  // Python None -> JS null
-  ts = ts.replace(/\bNone\b/g, 'null');
-
-  // Python float("inf") -> Infinity
-  ts = ts.replace(/float\(["']inf["']\)/g, 'Infinity');
-  ts = ts.replace(/float\(["']-inf["']\)/g, '-Infinity');
-  ts = ts.replace(/float\(["']nan["']\)/g, 'NaN');
-
-  // np.inf/nan -> Infinity/NaN
-  ts = ts.replace(/\bnp\.inf\b/g, 'Infinity');
-  ts = ts.replace(/\bnp\.nan\b/g, 'NaN');
-
-  // np.isnan -> Number.isNaN
-  ts = ts.replace(/\bnp\.isnan\(/g, 'Number.isNaN(');
-  ts = ts.replace(/\bnp\.isinf\(/g, '!Number.isFinite(');
-
-  // hasattr(obj, "prop") -> 'prop' in obj
-  ts = ts.replace(/hasattr\((\w+),\s*["'](\w+)["']\)/g, "'$2' in $1");
-
-  // isinstance checks
-  ts = ts.replace(/isinstance\((\w+),\s*bool\)/g, 'typeof $1 === "boolean"');
-  ts = ts.replace(/isinstance\((\w+),\s*int\)/g, 'typeof $1 === "number"');
-  ts = ts.replace(/isinstance\((\w+),\s*float\)/g, 'typeof $1 === "number"');
-  ts = ts.replace(/isinstance\((\w+),\s*str\)/g, 'typeof $1 === "string"');
-
-  // mx.array(...) needs 'new' in JavaScript
-  ts = ts.replace(/\bmx\.array\(/g, 'new mx.array(');
-
-  // np.array -> new mx.array
-  ts = ts.replace(/\bnp\.array\(/g, 'new mx.array(');
-
-  // np.allclose -> use custom helper
-  ts = ts.replace(/\bnp\.allclose\(/g, 'allClose(');
-
-  // len(x) or len(x.prop) -> x.length or x.prop.length
-  ts = ts.replace(/\blen\(([\w.]+)\)/g, '$1.length');
-
-  // list(x) -> Array.from(x) (handles x.prop too)
-  ts = ts.replace(/\blist\(([\w.]+)\.tolist\(\)\)/g, '$1.tolist()');
-  ts = ts.replace(/\blist\(([\w.]+)\)/g, 'Array.from($1)');
-
-  // range(n) -> [...Array(n).keys()]
-  ts = ts.replace(/\brange\((\d+)\)/g, '[...Array($1).keys()]');
-
-  // Python splat *args -> JS spread ...args (but not ** for kwargs)
-  ts = ts.replace(/(?<!\*)\*(\w+)/g, '...$1');
-
-  // Python list comprehension -> JS map
-  // [expr for var in iterable] -> iterable.map(var => expr)
-  // [expr for var in iterable if cond] -> iterable.filter(var => cond).map(var => expr)
-  ts = ts.replace(
-    /\[([^\[\]]+)\s+for\s+(\w+)\s+in\s+([^\[\]]+?)(?:\s+if\s+([^\[\]]+))?\]/g,
-    (match, expr, varName, iterable, condition) => {
-      const trimmedExpr = expr.trim();
-      const trimmedIterable = iterable.trim();
-      if (condition) {
-        return `${trimmedIterable}.filter(${varName} => ${condition.trim()}).map(${varName} => ${trimmedExpr})`;
-      }
-      return `${trimmedIterable}.map(${varName} => ${trimmedExpr})`;
-    }
-  );
-
-  // Python dict comprehension -> JS Object.fromEntries
-  // {k: v for k, v in iterable} -> Object.fromEntries(iterable.map(([k, v]) => [k, v]))
-  ts = ts.replace(
-    /\{([^{}]+):\s*([^{}]+)\s+for\s+([^{}]+)\s+in\s+([^{}]+)\}/g,
-    (match, keyExpr, valueExpr, varPattern, iterable) => {
-      const vars = varPattern.trim();
-      const destructure = vars.includes(',') ? `[${vars}]` : vars;
-      return `Object.fromEntries(${iterable.trim()}.map(${destructure} => [${keyExpr.trim()}, ${valueExpr.trim()}]))`;
-    }
-  );
-
-  // Python generator expression in function call -> .map()
-  // func(expr for var in iterable) -> func(...iterable.map(var => expr))
-  ts = ts.replace(
-    /(\w+)\(([^()]+)\s+for\s+(\w+)\s+in\s+([^()]+)\)/g,
-    (match, func, expr, varName, iterable) => {
-      return `${func}(...${iterable.trim()}.map(${varName} => ${expr.trim()}))`;
-    }
-  );
-
-  // Python lambda -> JS arrow function
-  // lambda x: x -> (x) => x
-  // lambda x: x.T -> (x) => x.T
-  // lambda x, y: x + y -> (x, y) => x + y
-  ts = ts.replace(
-    /\blambda\s*([^:]*?):\s*([^,}\]\)]+)/g,
-    (match, params, body) => {
-      const trimmedParams = params.trim();
-      const trimmedBody = body.trim();
-      if (trimmedParams) {
-        return `(${trimmedParams}) => ${trimmedBody}`;
-      } else {
-        return `() => ${trimmedBody}`;
-      }
-    }
-  );
-
-  return ts;
 }
 
 /**
  * Convert Python assertion to Vitest expect()
  */
-export function convertAssertion(assertType: string, args: string[]): string {
-  const convert = (s: string) => pythonToTypeScript(convertKwargs(s));
+export function convertAssertion(
+  assertType: string,
+  args: string[],
+  numpyValues?: Map<string, string>
+): string {
+  const convert = (s: string) => pythonToTypeScript(convertKwargs(s), undefined, numpyValues);
 
   switch (assertType) {
     case 'assertEqual':
       if (args.length >= 2) {
         const actual = convert(args[0]);
         const expected = convert(args[1]);
-        // Use toEqual for arrays, objects, and empty arrays
+        // Use toEqual for literal arrays/objects
         if (expected.startsWith('[') || expected.startsWith('{') || expected === '[]') {
           return `expect(${actual}).toEqual(${expected});`;
         }
-        return `expect(${actual}).toBe(${expected});`;
+        // Check if both are simple literals (numbers, strings, booleans)
+        const isSimpleLiteral = (s: string) =>
+          /^-?\d+(\.\d+)?$/.test(s) || // number
+          /^["'].*["']$/.test(s) || // string
+          s === 'true' || s === 'false' || s === 'null' ||
+          s === 'Infinity' || s === '-Infinity' || s === 'NaN';
+        if (isSimpleLiteral(actual) && isSimpleLiteral(expected)) {
+          return `expect(${actual}).toBe(${expected});`;
+        }
+        // For potential array comparisons, use pyAssertEqual
+        return `pyAssertEqual(mx, ${actual}, ${expected});`;
       }
       break;
 
@@ -737,7 +664,11 @@ function convertSlices(code: string): string {
 /**
  * Convert a single line/statement to TypeScript
  */
-export function convertLine(line: string, declaredVars: Set<string>): string {
+export function convertLine(
+  line: string,
+  declaredVars: Set<string>,
+  numpyValues?: Map<string, string>
+): string {
   const trimmed = line.trim();
   if (!trimmed || trimmed.startsWith('#')) {
     return '';
@@ -749,43 +680,23 @@ export function convertLine(line: string, declaredVars: Set<string>): string {
     return `// TODO (${skipCheck.reason}): ${trimmed}`;
   }
 
-  let ts = trimmed;
+  // First, convert the Python code to TypeScript using the AST visitor
+  // This must happen BEFORE we add JS keywords like 'let' or 'const'
+  let ts = pythonToTypeScript(trimmed, declaredVars, numpyValues);
 
-  // Handle slice assignments first: a[1:3] = x -> a = pySliceUpdate(mx, a, '1:3', x)
-  ts = convertSliceAssignments(ts);
-
-  // Tuple unpacking assignment: a, b = func() -> const [a, b] = func()
-  const tupleAssignMatch = ts.match(/^([a-z_][a-z0-9_]*(?:\s*,\s*[a-z_][a-z0-9_]*)+)\s*=\s*(.+)$/i);
-  if (tupleAssignMatch) {
-    const vars = tupleAssignMatch[1].split(',').map(v => v.trim());
-    const value = tupleAssignMatch[2];
-    const allNew = vars.every(v => !declaredVars.has(v));
-    vars.forEach(v => declaredVars.add(v));
-    const keyword = allNew ? 'const' : '';
-    ts = `${keyword} [${vars.join(', ')}] = ${value}`.trim();
+  // The AST visitor already handles variable declarations, so we just need
+  // to track which variables have been declared
+  const assignMatch = trimmed.match(/^([a-z_][a-z0-9_]*)\s*=/i);
+  if (assignMatch) {
+    declaredVars.add(assignMatch[1]);
   }
-  // Single variable assignment - add 'let' for first use
-  else {
-    const assignMatch = ts.match(/^([a-z_][a-z0-9_]*)\s*=/i);
-    if (assignMatch) {
-      const varName = assignMatch[1];
-      if (!declaredVars.has(varName)) {
-        ts = `let ${ts}`;
-        declaredVars.add(varName);
-      }
-    }
+  const tupleMatch = trimmed.match(/^([a-z_][a-z0-9_]*(?:\s*,\s*[a-z_][a-z0-9_]*)+)\s*=/i);
+  if (tupleMatch) {
+    tupleMatch[1].split(',').forEach(v => declaredVars.add(v.trim()));
   }
-
-  // Apply conversions
-  ts = convertLambda(ts);
-  ts = convertKwargs(ts);
-  ts = convertAtIndex(ts);
-  ts = convertComplex(ts);
-  ts = convertSlices(ts);
-  ts = pythonToTypeScript(ts);
 
   // Add semicolon if needed
-  if (!ts.endsWith(';') && !ts.endsWith('{') && !ts.endsWith('}') && !ts.startsWith('//')) {
+  if (ts && !ts.endsWith(';') && !ts.endsWith('{') && !ts.endsWith('}') && !ts.startsWith('//')) {
     ts += ';';
   }
 
@@ -795,30 +706,40 @@ export function convertLine(line: string, declaredVars: Set<string>): string {
 /**
  * Convert statements to TypeScript lines
  */
-function convertStatements(statements: Statement[], declaredVars: Set<string>, indent: string = '  '): string[] {
+export function convertStatements(
+  statements: Statement[],
+  declaredVars: Set<string>,
+  indent: string = '  ',
+  numpyValues?: Map<string, string>
+): string[] {
   const lines: string[] = [];
 
   for (const stmt of statements) {
-    const converted = convertStatement(stmt, declaredVars, indent);
+    const converted = convertStatement(stmt, declaredVars, indent, numpyValues);
     lines.push(...converted);
   }
 
   return lines;
 }
 
-function convertStatement(stmt: Statement, declaredVars: Set<string>, indent: string): string[] {
+function convertStatement(
+  stmt: Statement,
+  declaredVars: Set<string>,
+  indent: string,
+  numpyValues?: Map<string, string>
+): string[] {
   const lines: string[] = [];
 
   switch (stmt.type) {
     case 'assert':
       if (stmt.assertType && stmt.assertArgs) {
-        lines.push(indent + convertAssertion(stmt.assertType, stmt.assertArgs));
+        lines.push(indent + convertAssertion(stmt.assertType, stmt.assertArgs, numpyValues));
       }
       break;
 
     case 'assignment':
     case 'expression': {
-      const converted = convertLine(stmt.text, declaredVars);
+      const converted = convertLine(stmt.text, declaredVars, numpyValues);
       if (converted) {
         lines.push(indent + converted);
       }
@@ -827,7 +748,7 @@ function convertStatement(stmt: Statement, declaredVars: Set<string>, indent: st
 
     case 'for': {
       if (stmt.loopVar && stmt.iterable) {
-        const tsIterable = pythonToTypeScript(stmt.iterable);
+        const tsIterable = pythonToTypeScript(stmt.iterable, undefined, numpyValues);
         const loopVar = stmt.loopVar;
 
         // Convert Python tuple patterns to JS destructuring
@@ -838,7 +759,7 @@ function convertStatement(stmt: Statement, declaredVars: Set<string>, indent: st
         allVars.forEach(v => declaredVars.add(v));
 
         if (stmt.children) {
-          lines.push(...convertStatements(stmt.children, declaredVars, indent + '  '));
+          lines.push(...convertStatements(stmt.children, declaredVars, indent + '  ', numpyValues));
         }
         lines.push(`${indent}}`);
       } else {
@@ -858,7 +779,7 @@ function convertStatement(stmt: Statement, declaredVars: Set<string>, indent: st
         if (stmt.children && stmt.children.length > 0) {
           const bodyLines: string[] = [];
           for (const child of stmt.children) {
-            const cl = convertLine(child.text, declaredVars);
+            const cl = convertLine(child.text, declaredVars, numpyValues);
             if (cl && !cl.startsWith('//')) {
               bodyLines.push(cl);
             }
@@ -882,7 +803,7 @@ function convertStatement(stmt: Statement, declaredVars: Set<string>, indent: st
       // Handle subTest - inline the body
       else if (ctx.includes('subTest')) {
         if (stmt.children) {
-          lines.push(...convertStatements(stmt.children, declaredVars, indent));
+          lines.push(...convertStatements(stmt.children, declaredVars, indent, numpyValues));
         }
       }
       // Handle mx.stream - inline the body with a comment
@@ -891,7 +812,7 @@ function convertStatement(stmt: Statement, declaredVars: Set<string>, indent: st
         const streamArg = streamMatch?.[1] || 'mx.cpu';
         lines.push(`${indent}// Note: Originally in mx.stream(${streamArg}) context`);
         if (stmt.children) {
-          lines.push(...convertStatements(stmt.children, declaredVars, indent));
+          lines.push(...convertStatements(stmt.children, declaredVars, indent, numpyValues));
         }
       }
       // Other with statements
@@ -908,19 +829,87 @@ function convertStatement(stmt: Statement, declaredVars: Set<string>, indent: st
       if (/mx\.is_available|mx\.metal|mx\.default_device/.test(condition)) {
         lines.push(`${indent}// SKIP (device check): if ${condition}`);
       } else {
-        const tsCondition = pythonToTypeScript(condition);
+        const tsCondition = pythonToTypeScript(condition, undefined, numpyValues);
         lines.push(`${indent}if (${tsCondition}) {`);
         if (stmt.children) {
-          lines.push(...convertStatements(stmt.children, declaredVars, indent + '  '));
+          lines.push(...convertStatements(stmt.children, declaredVars, indent + '  ', numpyValues));
         }
         lines.push(`${indent}}`);
       }
       break;
     }
 
-    case 'return':
-      lines.push(`${indent}${pythonToTypeScript(stmt.text)};`);
+    case 'return': {
+      // Strip 'return' keyword and convert the expression
+      const returnExpr = stmt.text.replace(/^\s*return\s*/, '').trim();
+      if (returnExpr) {
+        lines.push(`${indent}return ${pythonToTypeScript(returnExpr, undefined, numpyValues)};`);
+      } else {
+        lines.push(`${indent}return;`);
+      }
       break;
+    }
+
+    case 'del':
+      // del x -> comment out, JS has garbage collection
+      lines.push(`${indent}/* ${stmt.text} */`);
+      break;
+
+    case 'function': {
+      // Convert nested Python function to JavaScript arrow function
+      const funcName = stmt.funcName || 'anonymous';
+      const funcParams = stmt.funcParams || '';
+
+      // Convert Python params to JavaScript
+      // Handle default values like x=1 -> x = 1
+      const jsParams = funcParams
+        .split(',')
+        .map(p => p.trim())
+        .filter(p => p.length > 0)
+        .map(p => {
+          // Handle default values
+          if (p.includes('=')) {
+            const [name, defaultVal] = p.split('=').map(s => s.trim());
+            return `${name} = ${pythonToTypeScript(defaultVal, undefined, numpyValues)}`;
+          }
+          return p;
+        })
+        .join(', ');
+
+      // Check if it's a simple single-expression function (for arrow function shorthand)
+      const hasMultipleStatements = stmt.children && stmt.children.length > 1;
+      const hasComplexBody = stmt.children && stmt.children.some(c =>
+        c.type === 'for' || c.type === 'if' || c.type === 'with' || c.type === 'function'
+      );
+
+      if (!hasMultipleStatements && !hasComplexBody && stmt.children && stmt.children.length === 1) {
+        const singleStmt = stmt.children[0];
+        if (singleStmt.type === 'return') {
+          // Simple return - use arrow shorthand
+          const returnExpr = singleStmt.text.replace(/^\s*return\s*/, '').trim();
+          const tsExpr = pythonToTypeScript(returnExpr, undefined, numpyValues);
+          lines.push(`${indent}const ${funcName} = (${jsParams}) => ${tsExpr};`);
+          declaredVars.add(funcName);
+          break;
+        }
+      }
+
+      // Full function body
+      lines.push(`${indent}const ${funcName} = (${jsParams}) => {`);
+      declaredVars.add(funcName);
+      if (stmt.children) {
+        // Create new scope with function parameters
+        const funcScope = new Set(declaredVars);
+        // Add function parameters to the scope
+        funcParams.split(',').forEach(p => {
+          const paramName = p.split('=')[0].trim();
+          if (paramName) funcScope.add(paramName);
+        });
+        lines.push(...convertStatements(stmt.children, funcScope, indent + '  ', numpyValues));
+      }
+      lines.push(`${indent}};`);
+      break;
+    }
   }
 
   return lines;
@@ -929,7 +918,32 @@ function convertStatement(stmt: Statement, declaredVars: Set<string>, indent: st
 /**
  * Check if code contains unconverted Python syntax
  */
-function hasUnconvertedSyntax(code: string): boolean {
+export function hasUnconvertedSyntax(code: string): boolean {
+  // Array destructuring from MLX arrays is now handled using pyIter
+  // Old check removed - we now convert [x, y, z] = a to [...pyIter(mx, a)]
+
+  // Empty 'let;' statements (failed assignment conversion)
+  if (/\blet\s*;/.test(code)) {
+    return true;
+  }
+
+  // AST visitor marked something as unconverted
+  if (/\/\*\s*UNCONVERTED:/.test(code)) {
+    return true;
+  }
+
+  // JavaScript bitwise operators on arrays (& | ^ ~)
+  // These don't work like Python's overloaded operators
+  if (/mx\.array\([^)]*\)\s*[&|^]/.test(code) || /[&|^]\s*mx\.array/.test(code)) {
+    return true;
+  }
+  // Note: Bitwise NOT (~) on mx.array is now supported via AST visitor
+
+  // Python import statements that weren't converted
+  if (/\bfrom\s+\w+\s+import\b/.test(code)) {
+    return true;
+  }
+
   // Generator/comprehension expressions: anything that looks like "X for Y in Z"
   // where it's NOT a proper JS for loop
   // Match patterns like: "foo for x in y" or ") for x in y"
@@ -937,13 +951,56 @@ function hasUnconvertedSyntax(code: string): boolean {
     return true;
   }
 
-  // Python @ operator (matrix multiplication)
-  if (/\s@\s/.test(code)) {
+  // Python @= augmented assignment (can't convert easily)
+  // Note: Regular @ operator is now converted to mx.matmul() by the AST visitor
+  if (/@=/.test(code)) {
     return true;
   }
 
-  // Python ** operator (power) - but allow in object literals like { x: 5 }
-  if (/\*\*/.test(code) && !/\*\*\s*\{/.test(code)) {
+  // Python ellipsis (...) not converted
+  // Remove string literals before checking to avoid false positives
+  const codeWithoutStrings = code.replace(/"[^"]*"/g, '""').replace(/'[^']*'/g, "''");
+  // Match standalone ellipsis followed by comma/bracket, but NOT spread operator (...)
+  // Python ellipsis: arr[...] or arr[..., 0] - standalone ... as index
+  // JS spread: [...array] or [...pyIter(x)] - ... followed by identifier/expression
+  if (/\.\.\.\s*[,\]]/.test(codeWithoutStrings) || /\[\s*\.\.\.\s*[,\]]/.test(codeWithoutStrings)) {
+    return true;
+  }
+
+  // Empty slice indicators (double comma without content)
+  if (/,\s*,/.test(code)) {
+    return true;
+  }
+
+  // Unconverted Python star operator (* for unpacking)
+  // Pattern: (*, or ,*) but not ** (power) and not ...* (spread)
+  // Also [*, which is malformed array unpacking
+  if (/\(\s*\*[^*]/.test(code) || /,\s*\*[^*]/.test(code) || /\[\s*\*[^*.]/.test(code)) {
+    return true;
+  }
+
+  // Python f-strings with format specifiers (not fully convertible)
+  // Pattern: f"...{expr:format}..." where :format can't be converted to JS
+  if (/f"[^"]*\{[^}]+:[^}]+\}/.test(code) || /f'[^']*\{[^}]+:[^}]+\}/.test(code)) {
+    return true;
+  }
+
+  // Remaining Python f-string prefix
+  if (/\bf['"]/.test(code)) {
+    return true;
+  }
+
+  // Python inline comments (# not in a string or URL)
+  // This indicates a comment that wasn't properly stripped
+  if (/#\s+\w/.test(code) && !/https?:\/\//.test(code)) {
+    return true;
+  }
+
+  // Note: Python ** operator (power) is now converted to Math.pow() by the AST visitor
+  // Skip **= augmented assignment and **kwargs patterns:
+  // - **kwargs (preceded by comma or opening paren, followed by word)
+  // - **, kwargs (bare ** followed by comma - malformed conversion)
+  if (/\*\*=/.test(code) || /[,(]\s*\*\*\w+/.test(code) || /,\s*\*\*\s*,/.test(code)) {
     return true;
   }
 
@@ -964,7 +1021,19 @@ function hasUnconvertedSyntax(code: string): boolean {
   }
 
   // numpy (np.) usage - we don't have numpy
-  if (/\bnp\./.test(code)) {
+  // Only match actual numpy module access (np.something), not variables ending in _np
+  if (/(?<![a-zA-Z_])np\./.test(code)) {
+    return true;
+  }
+
+  // MLX-specific test assertions that require numpy comparison
+  if (/\bexpectAllClose\([^)]*,\s*mx\.\w+\)/.test(code)) {
+    // This pattern means assertCmpNumpy was incorrectly converted
+    return true;
+  }
+
+  // assertCmpNumpy assertions (require numpy)
+  if (/\bassertCmpNumpy\b/.test(code)) {
     return true;
   }
 
@@ -974,22 +1043,35 @@ function hasUnconvertedSyntax(code: string): boolean {
   }
 
   // mlx. instead of mx. (unconverted)
-  if (/\bmlx\./.test(code)) {
+  // Exclude matches inside strings (e.g., "mlx.core.bool")
+  if (/(?<!["'])\bmlx\./.test(code)) {
     return true;
   }
 
-  // tuple() function (Python)
-  if (/\btuple\(/.test(code)) {
+  // tuple() function (Python) - now converted to Array.from() by AST visitor
+  // if (/\btuple\(/.test(code)) {
+  //   return true;
+  // }
+
+  // getattr() function (Python) - now handled by AST visitor
+  // if (/\bgetattr\(/.test(code)) {
+  //   return true;
+  // }
+
+  // mx.random.* - now supported via native bindings
+  // if (/\bmx\.random\./.test(code)) {
+  //   return true;
+  // }
+
+  // Python self references (class attributes/methods)
+  // Skip self.something except for known assertion methods that we convert
+  const selfPattern = /\bself\.(?!assertTrue|assertFalse|assertEqual|assertNotEqual|assertAlmostEqual|assertIsNone|assertIsNotNone|assertGreater|assertLess|assertGreaterEqual|assertLessEqual|assertIn|assertNotIn|assertListEqual|assertRaises|subTest|assertTupleEqual|assertSequenceEqual|assertEqualArray|assertCmpNumpy)\w+/;
+  if (selfPattern.test(code)) {
     return true;
   }
 
-  // getattr() function (Python)
-  if (/\bgetattr\(/.test(code)) {
-    return true;
-  }
-
-  // mx.random.* - random module not fully implemented
-  if (/\bmx\.random\./.test(code)) {
+  // Python np[...] bracket indexing (dictionary-style access)
+  if (/\bnp\[/.test(code)) {
     return true;
   }
 
@@ -1007,15 +1089,20 @@ function hasUnconvertedSyntax(code: string): boolean {
     return true;
   }
   // More Python modules
-  if (/\b(operator|pickle|copy|weakref|math)\./i.test(code)) {
+  if (/\b(operator|pickle|weakref)\./i.test(code)) {
     return true;
   }
+  // Note: copy/deepcopy are now handled via pyCopy helper
+  // if (/\b(copy|deepcopy)\b/.test(code)) {
+  //   return true;
+  // }
   // Python special methods
   if (/__array_namespace__|__dlpack__|__iter__|__next__/.test(code)) {
     return true;
   }
   // mx functions not implemented
-  if (/\bmx\.(new_stream|cpu|gpu|default_device|set_default_device|export_to_dot|async_eval|synchronize|get_peak_memory|grad|vjp|jvp|value_and_grad|eval)\b/.test(code)) {
+  // Note: mx.eval is now handled as a no-op comment by the AST visitor
+  if (/\bmx\.(new_stream|cpu|gpu|default_device|set_default_device|export_to_dot|async_eval|synchronize|get_peak_memory|grad|vjp|jvp|value_and_grad|einsum|einsum_path)\b/.test(code)) {
     return true;
   }
 
@@ -1033,6 +1120,8 @@ function hasUnconvertedSyntax(code: string): boolean {
       // Skip if it's clearly an array literal (starts with number or variable, has commas)
       if (/^\[\s*[\d.]+\s*,/.test(match)) continue;
       if (/^\[\s*\w+\s*,/.test(match)) continue;
+      // Skip if it contains object syntax (has { anywhere)
+      if (match.includes('{')) continue;
       // Skip if it's already using pySlice
       if (line.includes('pySlice')) continue;
       // This looks like an unconverted slice
@@ -1046,12 +1135,19 @@ function hasUnconvertedSyntax(code: string): boolean {
 /**
  * Convert a test method to TypeScript
  */
-export function convertTestMethod(method: TestMethod, source: string): string {
-  const statements = parseStatements(method.body, source);
+export function convertTestMethod(
+  method: TestMethod,
+  source: string,
+  numpyValues?: Map<string, string>
+): string {
   const testName = method.name.replace('test_', '');
+
+  // Nested function definitions are now supported via the 'function' statement type
+
+  const statements = parseStatements(method.body, source);
   const declaredVars = new Set<string>();
 
-  const bodyLines = convertStatements(statements, declaredVars, '  ');
+  const bodyLines = convertStatements(statements, declaredVars, '  ', numpyValues);
   const bodyCode = bodyLines.join('\n');
 
   // Check if the converted code has unconverted Python syntax
@@ -1077,12 +1173,46 @@ export function convertTestFile(
   const { filter, importPath = '../../dist/index.js' } = options;
   const classes = extractTests(source);
 
+  // Extract and evaluate numpy expressions at conversion time
+  const allNumpyExprs = extractNumpyExpressions(source);
+  const staticNumpyExprs = allNumpyExprs.filter(isStaticNumpyExpression);
+  const numpyResults = evaluateNumpyExpressions(staticNumpyExprs);
+
+  // Convert evaluation results to TypeScript code
+  const numpyValues = new Map<string, string>();
+  for (const [expr, result] of numpyResults) {
+    if (result.type !== 'error') {
+      numpyValues.set(expr, resultToTypeScript(result));
+    }
+  }
+
   // Check which helpers we need
   const needsAllClose = source.includes('np.allclose') || source.includes('assert_allclose');
   const needsSliceRead = /\w+\[.*:.*\]/.test(source);
   const needsSliceUpdate = /\w+\[.*:.*\]\s*=/.test(source);
   const needsAtIndex = /\.at\[/.test(source);
   const needsComplex = /\d+\.?\d*j\b|1j\s*\*/.test(source);
+  // Check if code has comparisons (== or !=) that might involve arrays
+  const needsCompare = /[^=!<>]==[^=]|[^!]=!=[^=]/.test(source);
+  // Check if code has assertEqual (which may compare arrays)
+  const needsAssertEqual = source.includes('assertEqual');
+  // Check if code has isnan/isinf (which need smart scalar/array handling)
+  const needsIsNaN = /\bisnan\b/.test(source);
+  const needsIsInf = /\bisinf\b/.test(source);
+  // Check if code uses bool() on arrays
+  const needsBool = /\bbool\s*\(/.test(source);
+  // Check if code iterates over arrays
+  const needsIter = /\bfor\s+\w+\s+in\s+\w+/.test(source);
+  // Check if code uses len() on arrays
+  const needsLen = /\blen\s*\(/.test(source);
+  // Check if code uses enumerate() on arrays
+  const needsEnumerate = /\benumerate\s*\(/.test(source);
+  // Check if code uses zip() on arrays
+  const needsZip = /\bzip\s*\(/.test(source);
+  // Check if code uses itertools functions (handles both direct import and module access)
+  const needsProduct = /\b(product|itertools\.product)\s*\(/.test(source);
+  const needsPermutations = /\b(permutations|itertools\.permutations)\s*\(/.test(source);
+  const needsCombinations = /\b(combinations|itertools\.combinations)\s*\(/.test(source);
 
   const lines: string[] = [
     "import { describe, it, expect } from 'vitest';",
@@ -1106,11 +1236,49 @@ export function convertTestFile(
   if (needsComplex) {
     utilImports.push('makeComplex');
   }
+  if (needsCompare) {
+    utilImports.push('pyCompare', 'pyNotEqual');
+  }
+  if (needsAssertEqual) {
+    utilImports.push('pyAssertEqual');
+  }
+  if (needsIsNaN) {
+    utilImports.push('pyIsNaN');
+  }
+  if (needsIsInf) {
+    utilImports.push('pyIsInf');
+  }
+  if (needsBool) {
+    utilImports.push('pyBool');
+  }
+  if (needsIter) {
+    utilImports.push('pyIter');
+  }
+  if (needsLen) {
+    utilImports.push('pyLen');
+  }
+  if (needsEnumerate) {
+    utilImports.push('pyEnumerate');
+  }
+  if (needsZip) {
+    utilImports.push('pyZip');
+  }
+  if (needsProduct) {
+    utilImports.push('pyProduct');
+  }
+  if (needsPermutations) {
+    utilImports.push('pyPermutations');
+  }
+  if (needsCombinations) {
+    utilImports.push('pyCombinations');
+  }
   if (utilImports.length > 0) {
     lines.push(`import { ${utilImports.join(', ')} } from '../utils';`);
   }
 
   lines.push('');
+
+  let hasTests = false;
 
   for (const cls of classes) {
     const suiteName = cls.name.replace('Test', '');
@@ -1122,16 +1290,25 @@ export function convertTestFile(
 
     if (methods.length === 0) continue;
 
+    hasTests = true;
     lines.push(`describe('${suiteName}', () => {`);
 
     for (const method of methods) {
-      const converted = convertTestMethod(method, source);
+      const converted = convertTestMethod(method, source, numpyValues);
       for (const line of converted.split('\n')) {
         lines.push(`  ${line}`);
       }
       lines.push('');
     }
 
+    lines.push('});');
+    lines.push('');
+  }
+
+  // If no tests were generated, add a placeholder to avoid "no tests found" error
+  if (!hasTests) {
+    lines.push("describe('(no convertible tests)', () => {");
+    lines.push("  it.skip('all tests require unconverted Python features', () => {});");
     lines.push('});');
     lines.push('');
   }
