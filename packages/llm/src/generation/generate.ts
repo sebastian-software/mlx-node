@@ -121,7 +121,7 @@ export class TextGenerator {
 
     // Return logits for last position
     // logits shape: (batch, seqLen, vocabSize) -> (batch, vocabSize)
-    const lastLogits = logits!; // TODO: Slice to get [:, -1, :]
+    const lastLogits = this.mx.take_last(logits!, 1);
 
     return lastLogits;
   }
@@ -140,8 +140,8 @@ export class TextGenerator {
     const logits = this.model.forward(tokens, this.cache!);
 
     // Get logits for this position
-    // logits shape: (1, 1, vocabSize) -> (vocabSize)
-    const stepLogits = logits; // TODO: Proper slicing
+    // logits shape: (1, 1, vocabSize) -> (1, vocabSize)
+    const stepLogits = this.mx.take_last(logits, 1);
 
     // Sample next token
     const contextTokens = this.generatedTokens.length > 0

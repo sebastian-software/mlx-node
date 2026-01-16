@@ -175,9 +175,8 @@ export class Attention extends Module {
     // Expand K, V for GQA if needed
     if (this.numKVHeads < this.numHeads) {
       const repeats = this.numHeads / this.numKVHeads;
-      // TODO: Implement repeat_interleave or similar
-      // k = repeat(k, repeats, axis=2)
-      // v = repeat(v, repeats, axis=2)
+      k = this.mx.repeat_interleave(k, repeats, 2);
+      v = this.mx.repeat_interleave(v, repeats, 2);
     }
 
     // Transpose for attention: (batch, numHeads, seqLen, headDim)

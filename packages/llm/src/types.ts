@@ -81,6 +81,26 @@ export interface MX {
   stack(arrays: MLXArray[], axis?: number): MLXArray;
   take(a: MLXArray, indices: MLXArray, axis?: number): MLXArray;
 
+  // LLM utility functions
+  /**
+   * Repeat elements along an axis (for GQA KV head expansion)
+   * Unlike repeat which tiles the whole array, this repeats each element:
+   * [a,b,c] with repeats=2 -> [a,a,b,b,c,c]
+   */
+  repeat_interleave(a: MLXArray, repeats: number, axis?: number): MLXArray;
+
+  /**
+   * Take the last element along an axis (for logits extraction)
+   * Equivalent to arr[:, -1, :] when axis=1
+   */
+  take_last(a: MLXArray, axis: number, keepdims?: boolean): MLXArray;
+
+  /**
+   * Slice along a single axis (for KV cache operations)
+   * Equivalent to arr[:, start:end, :] when axis=1
+   */
+  slice_axis(a: MLXArray, axis: number, start?: number, end?: number): MLXArray;
+
   // Activations
   softmax(a: MLXArray, axis?: number): MLXArray;
   sigmoid(a: MLXArray): MLXArray;

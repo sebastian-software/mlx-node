@@ -187,9 +187,8 @@ class Gemma3Attention extends Module {
     // Expand K, V for GQA (repeat interleave)
     const kvRepeats = this.numHeads / this.numKVHeads;
     if (kvRepeats > 1) {
-      // TODO: Implement proper repeat_interleave
-      // k = repeat_interleave(k, kvRepeats, axis=2)
-      // v = repeat_interleave(v, kvRepeats, axis=2)
+      k = this.mx.repeat_interleave(k, kvRepeats, 2);
+      v = this.mx.repeat_interleave(v, kvRepeats, 2);
     }
 
     // Transpose for attention: (batch, numHeads, seqLen, headDim)
@@ -389,10 +388,26 @@ class Gemma3LanguageModel extends Module {
     }
 
     // Create causal mask: lower triangular
-    const totalLen = offset + seqLen;
-    // TODO: Implement proper causal mask creation
     // mask[i, j] = -inf if j > i + offset else 0
-    return undefined;
+    const totalLen = offset + seqLen;
+
+    // Create row indices (query positions): [0, 1, ..., seqLen-1] + offset
+    const rows = this.mx.arange(offset, offset + seqLen);
+    const rowsExpanded = this.mx.expandDims(rows, 1); // (seqLen, 1)
+
+    // Create column indices (key positions): [0, 1, ..., totalLen-1]
+    const cols = this.mx.arange(0, totalLen);
+    const colsExpanded = this.mx.expandDims(cols, 0); // (1, totalLen)
+
+    // mask[i,j] = -inf where col > row (future positions)
+    // Using broadcasting: (seqLen, 1) vs (1, totalLen) -> (seqLen, totalLen)
+    const isCausal = this.mx.greater(colsExpanded, rowsExpanded);
+
+    // Convert boolean mask to float mask with -inf for masked positions
+    const negInf = this.mx.full([1], -Infinity, 'float16');
+    const zeroVal = this.mx.full([1], 0, 'float16');
+
+    return this.mx.where(isCausal, negInf, zeroVal);
   }
 }
 

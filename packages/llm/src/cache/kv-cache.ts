@@ -75,26 +75,26 @@ export class KVCache {
       const [batch, , nKVHeads, headDim] = this.keys.shape;
       const newAllocLen = Math.ceil((this.offset + seqLen + this.step) / this.step) * this.step;
 
-      const newKeys = this.mx.zeros([batch, newAllocLen, nKVHeads, headDim], 'float16');
-      const newValues = this.mx.zeros([batch, newAllocLen, nKVHeads, headDim], 'float16');
+      // Get existing data (only up to current offset)
+      const existingKeys = this.mx.slice_axis(this.keys, 1, 0, this.offset);
+      const existingValues = this.mx.slice_axis(this.values, 1, 0, this.offset);
 
-      // TODO: Copy old data to new arrays
-      // This requires slice assignment which may need special handling
-      this.keys = newKeys;
-      this.values = newValues;
+      // Create new larger arrays and concatenate
+      const padding = this.mx.zeros([batch, newAllocLen - this.offset, nKVHeads, headDim], 'float16');
+      this.keys = this.mx.concatenate([existingKeys, padding], 1);
+      this.values = this.mx.concatenate([existingValues, padding], 1);
     }
 
     // Update cache at current offset
-    // TODO: Implement slice assignment
-    // For now, concatenate and slice
     if (this.offset === 0) {
       this.keys = keys;
       this.values = values;
     } else {
-      // Concatenate along sequence dimension
-      const prevKeys = this.keys; // Would need slicing: this.keys[:, :this.offset, :, :]
-      const prevValues = this.values;
+      // Get existing data up to current offset
+      const prevKeys = this.mx.slice_axis(this.keys, 1, 0, this.offset);
+      const prevValues = this.mx.slice_axis(this.values, 1, 0, this.offset);
 
+      // Concatenate with new keys/values
       this.keys = this.mx.concatenate([prevKeys, keys], 1);
       this.values = this.mx.concatenate([prevValues, values], 1);
     }
@@ -202,17 +202,23 @@ export class RotatingKVCache {
 
     if (totalLen > maxLen) {
       // Keep first `keepFirst` tokens + last `maxSize` tokens
-      // This requires advanced slicing which we'll implement with concat
-      const excess = totalLen - maxLen;
-
       if (this.keepFirst > 0) {
-        // TODO: Implement proper slicing
-        // For now, this is a simplified version
-        // Would need: concat(keys[:, :keepFirst], keys[:, -maxSize:])
-      }
+        // Get first keepFirst tokens
+        const firstKeys = this.mx.slice_axis(this.keys, 1, 0, this.keepFirst);
+        const firstValues = this.mx.slice_axis(this.values, 1, 0, this.keepFirst);
 
-      // Simple version: just keep last maxLen tokens
-      // TODO: Implement proper slice operation
+        // Get last maxSize tokens (negative indexing)
+        const lastKeys = this.mx.slice_axis(this.keys, 1, -this.maxSize);
+        const lastValues = this.mx.slice_axis(this.values, 1, -this.maxSize);
+
+        // Combine: [first N] + [last maxSize]
+        this.keys = this.mx.concatenate([firstKeys, lastKeys], 1);
+        this.values = this.mx.concatenate([firstValues, lastValues], 1);
+      } else {
+        // Simple case: just keep last maxLen tokens
+        this.keys = this.mx.slice_axis(this.keys, 1, -maxLen);
+        this.values = this.mx.slice_axis(this.values, 1, -maxLen);
+      }
     }
 
     return [this.keys, this.values];
