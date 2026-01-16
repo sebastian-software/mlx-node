@@ -33,6 +33,24 @@ export abstract class Module {
   }
 
   /**
+   * Get a parameter by name (for use in forward())
+   */
+  protected getParameter(name: string): MLXArray {
+    const param = this._parameters.get(name);
+    if (!param) {
+      throw new Error(`Parameter '${name}' not found. Was the model loaded?`);
+    }
+    return param;
+  }
+
+  /**
+   * Check if a parameter exists
+   */
+  protected hasParameter(name: string): boolean {
+    return this._parameters.has(name);
+  }
+
+  /**
    * Get all parameters (including from child modules)
    */
   parameters(): Map<string, MLXArray> {
@@ -61,14 +79,29 @@ export abstract class Module {
   }
 
   /**
-   * Load weights from a weight map
+   * Load weights from a weight map.
+   *
+   * This method loads weights into the module hierarchy by matching
+   * weight keys to module paths. Weights are loaded directly into
+   * _parameters, which are then accessed via getParameter().
    */
   loadWeights(weights: Weights, prefix = ''): void {
-    // Load own parameters
-    for (const [name] of this._parameters) {
-      const key = prefix ? `${prefix}.${name}` : name;
-      if (weights[key]) {
-        this._parameters.set(name, weights[key]);
+    const prefixDot = prefix ? `${prefix}.` : '';
+
+    // Find and load weights that belong to this module directly
+    for (const [key, value] of Object.entries(weights)) {
+      // Skip keys that don't match our prefix
+      if (prefix && !key.startsWith(prefixDot)) {
+        continue;
+      }
+
+      // Get the local key (without prefix)
+      const localKey = prefix ? key.slice(prefixDot.length) : key;
+
+      // Check if this is a direct parameter (no dots) or belongs to a child
+      if (!localKey.includes('.')) {
+        // Direct parameter for this module
+        this._parameters.set(localKey, value);
       }
     }
 
@@ -88,6 +121,13 @@ export abstract class Module {
       count += param.size;
     }
     return count;
+  }
+
+  /**
+   * Update a specific parameter (useful for manual weight setting)
+   */
+  setParameter(name: string, value: MLXArray): void {
+    this._parameters.set(name, value);
   }
 }
 
