@@ -1,5 +1,7 @@
 /**
  * Core types for @mlx-node/llm
+ *
+ * These types match the mlx-node API which uses Python-style snake_case.
  */
 
 // Re-export MLX types - these will come from mlx-node once bindings are complete
@@ -12,7 +14,6 @@ export interface MLXArray {
   readonly dtype: Dtype;
   readonly itemsize: number;
   readonly nbytes: number;
-  readonly T: MLXArray;
 
   reshape(shape: number[]): MLXArray;
   astype(dtype: DtypeCategory): MLXArray;
@@ -35,7 +36,8 @@ export type StreamOrDevice = unknown;
 
 /**
  * MLX Core operations interface
- * This will be populated from mlx-node bindings
+ *
+ * Uses snake_case to match mlx-node's Python-derived API.
  */
 export interface MX {
   // Array creation
@@ -55,6 +57,7 @@ export interface MX {
   rsqrt(a: MLXArray): MLXArray;
   exp(a: MLXArray): MLXArray;
   log(a: MLXArray): MLXArray;
+  erf(a: MLXArray): MLXArray;
   abs(a: MLXArray): MLXArray;
   negative(a: MLXArray): MLXArray;
   square(a: MLXArray): MLXArray;
@@ -82,17 +85,18 @@ export interface MX {
   cumsum(a: MLXArray, axis?: number, reverse?: boolean, inclusive?: boolean): MLXArray;
   cumprod(a: MLXArray, axis?: number, reverse?: boolean, inclusive?: boolean): MLXArray;
 
-  // Shape operations
+  // Shape operations (snake_case to match mlx-node)
   reshape(a: MLXArray, shape: number[]): MLXArray;
   transpose(a: MLXArray, axes?: number[]): MLXArray;
   squeeze(a: MLXArray, axis?: number | number[]): MLXArray;
-  expandDims(a: MLXArray, axis: number | number[]): MLXArray;
+  expand_dims(a: MLXArray, axis: number | number[]): MLXArray;
   concatenate(arrays: MLXArray[], axis?: number): MLXArray;
   split(a: MLXArray, indices: number | number[], axis?: number): MLXArray[];
   stack(arrays: MLXArray[], axis?: number): MLXArray;
   take(a: MLXArray, indices: MLXArray, axis?: number): MLXArray;
   take_along_axis(a: MLXArray, indices: MLXArray, axis: number): MLXArray;
   put_along_axis(a: MLXArray, indices: MLXArray, values: MLXArray, axis: number): MLXArray;
+  broadcast_to(a: MLXArray, shape: number[]): MLXArray;
 
   // LLM utility functions
   /**
@@ -125,11 +129,11 @@ export interface MX {
   // Comparison
   where(condition: MLXArray, x: MLXArray, y: MLXArray): MLXArray;
   equal(a: MLXArray, b: MLXArray | number): MLXArray;
-  notEqual(a: MLXArray, b: MLXArray | number): MLXArray;
+  not_equal(a: MLXArray, b: MLXArray | number): MLXArray;
   less(a: MLXArray, b: MLXArray | number): MLXArray;
-  lessEqual(a: MLXArray, b: MLXArray | number): MLXArray;
+  less_equal(a: MLXArray, b: MLXArray | number): MLXArray;
   greater(a: MLXArray, b: MLXArray | number): MLXArray;
-  greaterEqual(a: MLXArray, b: MLXArray | number): MLXArray;
+  greater_equal(a: MLXArray, b: MLXArray | number): MLXArray;
 
   // Random
   random: {
@@ -141,20 +145,38 @@ export interface MX {
   // Fast operations (optimized kernels)
   fast: {
     rmsNorm(x: MLXArray, weight: MLXArray | null, eps: number): MLXArray;
+    /**
+     * Apply rotary position embeddings to a single array
+     * @param x Input array of shape (batch, seqLen, nHeads, headDim)
+     * @param dims Number of dimensions to apply RoPE to
+     * @param traditional Use traditional RoPE formulation
+     * @param base Base frequency for position encoding
+     * @param scale Scaling factor
+     * @param offset Position offset for incremental decoding
+     */
     rope(
-      q: MLXArray,
-      k: MLXArray,
+      x: MLXArray,
       dims: number,
       traditional?: boolean,
       base?: number,
       scale?: number,
-      offset?: number | MLXArray
-    ): [MLXArray, MLXArray];
+      offset?: number
+    ): MLXArray;
+    /**
+     * Scaled dot-product attention
+     * @param q Query tensor
+     * @param k Key tensor
+     * @param v Value tensor
+     * @param scale Attention scale factor
+     * @param maskMode Mask mode: "" (custom mask), "causal", etc.
+     * @param mask Optional custom mask array
+     */
     scaledDotProductAttention(
       q: MLXArray,
       k: MLXArray,
       v: MLXArray,
       scale: number,
+      maskMode?: string,
       mask?: MLXArray
     ): MLXArray;
   };
@@ -162,6 +184,8 @@ export interface MX {
   // I/O
   load(filepath: string): Record<string, MLXArray>;
   save(filepath: string, arrays: Record<string, MLXArray>): void;
+  load_safetensors(filepath: string): Weights;
+  save_safetensors(filepath: string, arrays: Weights, metadata?: Record<string, string>): void;
 
   // Evaluation
   eval(...arrays: MLXArray[]): void;
