@@ -71,6 +71,17 @@ export interface MX {
   argmax(a: MLXArray, axis?: number, keepdims?: boolean): MLXArray;
   argmin(a: MLXArray, axis?: number, keepdims?: boolean): MLXArray;
 
+  // Sorting and searching
+  sort(a: MLXArray, axis?: number): MLXArray;
+  argsort(a: MLXArray, axis?: number): MLXArray;
+  partition(a: MLXArray, kth: number, axis?: number): MLXArray;
+  argpartition(a: MLXArray, kth: number, axis?: number): MLXArray;
+  topk(a: MLXArray, k: number, axis?: number): MLXArray;
+
+  // Cumulative operations
+  cumsum(a: MLXArray, axis?: number, reverse?: boolean, inclusive?: boolean): MLXArray;
+  cumprod(a: MLXArray, axis?: number, reverse?: boolean, inclusive?: boolean): MLXArray;
+
   // Shape operations
   reshape(a: MLXArray, shape: number[]): MLXArray;
   transpose(a: MLXArray, axes?: number[]): MLXArray;
@@ -80,6 +91,8 @@ export interface MX {
   split(a: MLXArray, indices: number | number[], axis?: number): MLXArray[];
   stack(arrays: MLXArray[], axis?: number): MLXArray;
   take(a: MLXArray, indices: MLXArray, axis?: number): MLXArray;
+  take_along_axis(a: MLXArray, indices: MLXArray, axis: number): MLXArray;
+  put_along_axis(a: MLXArray, indices: MLXArray, values: MLXArray, axis: number): MLXArray;
 
   // LLM utility functions
   /**
