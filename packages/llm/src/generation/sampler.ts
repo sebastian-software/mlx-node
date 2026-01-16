@@ -233,8 +233,8 @@ export class RepetitionPenaltyProcessor implements LogitsProcessor {
 
     // Get logits for tokens in context
     const selectedLogits = this.mx.take_along_axis(
-      this.mx.expandDims(logits, 0),
-      this.mx.expandDims(flatTokens, 0),
+      this.mx.expand_dims(logits, 0),
+      this.mx.expand_dims(flatTokens, 0),
       -1
     );
 
@@ -252,8 +252,8 @@ export class RepetitionPenaltyProcessor implements LogitsProcessor {
 
     // Put penalized values back
     const result = this.mx.put_along_axis(
-      this.mx.expandDims(logits, 0),
-      this.mx.expandDims(flatTokens, 0),
+      this.mx.expand_dims(logits, 0),
+      this.mx.expand_dims(flatTokens, 0),
       penalizedSelected,
       -1
     );

@@ -56,6 +56,11 @@ export interface GenerativeModel {
    * Create a new cache for this model
    */
   createCache(): ModelCache;
+
+  /**
+   * Get the number of parameters in the model
+   */
+  numParameters(): number;
 }
 
 /**
