@@ -1,0 +1,45 @@
+{
+  "name": "@mlx-node/tokenizer",
+  "version": "0.1.0",
+  "description": "SentencePiece tokenizer bindings for Node.js",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "npm run build:ts && npm run build:native",
+    "build:ts": "tsc",
+    "build:native": "cmake-js compile",
+    "rebuild": "cmake-js rebuild",
+    "clean": "rm -rf build dist",
+    "test": "bun test"
+  },
+  "keywords": [
+    "sentencepiece",
+    "tokenizer",
+    "nlp",
+    "mlx",
+    "llm"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "node-addon-api": "^8.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "cmake-js": "^7.4.0",
+    "typescript": "^5.7.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/anthropics/mlx-node.git",
+    "directory": "packages/tokenizer"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "dist",
+    "build/Release/*.node"
+  ]
+}
