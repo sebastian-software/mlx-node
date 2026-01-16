@@ -4,7 +4,7 @@
 
 export { Module, ModuleList } from './module.js';
 export { Linear, QuantizedLinear, type LinearOptions, type QuantizedLinearOptions } from './linear.js';
-export { Embedding, type EmbeddingOptions } from './embedding.js';
+export { Embedding, QuantizedEmbedding, type EmbeddingOptions, type QuantizedEmbeddingOptions } from './embedding.js';
 export { RMSNorm, type RMSNormOptions } from './rms-norm.js';
 export {
   RoPE,
