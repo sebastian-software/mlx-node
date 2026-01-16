@@ -338,32 +338,31 @@ describe('Math Functions', () => {
 });
 
 describe('Logical Operations', () => {
-  // TODO: logical_and/or/not need bindings
-  it.skip('computes logical_and', () => {
-    const a = new mx.array([true, true, false, false]);
-    const b = new mx.array([true, false, true, false]);
+  it('computes logical_and', () => {
+    const a = new mx.array([1, 1, 0, 0], 'bool');
+    const b = new mx.array([1, 0, 1, 0], 'bool');
     expect(mx.logical_and(a, b).tolist()).toEqual([true, false, false, false]);
   });
 
-  it.skip('computes logical_or', () => {
-    const a = new mx.array([true, true, false, false]);
-    const b = new mx.array([true, false, true, false]);
+  it('computes logical_or', () => {
+    const a = new mx.array([1, 1, 0, 0], 'bool');
+    const b = new mx.array([1, 0, 1, 0], 'bool');
     expect(mx.logical_or(a, b).tolist()).toEqual([true, true, true, false]);
   });
 
-  it.skip('computes logical_not', () => {
-    const a = new mx.array([true, false, true]);
+  it('computes logical_not', () => {
+    const a = new mx.array([1, 0, 1], 'bool');
     expect(mx.logical_not(a).tolist()).toEqual([false, true, false]);
   });
 
-  it.skip('computes all', () => {
-    expect(mx.all(new mx.array([true, true, true])).item()).toBe(true);
-    expect(mx.all(new mx.array([true, false, true])).item()).toBe(false);
+  it('computes all', () => {
+    expect(mx.all(new mx.array([1, 1, 1], 'bool')).item()).toBe(true);
+    expect(mx.all(new mx.array([1, 0, 1], 'bool')).item()).toBe(false);
   });
 
-  it.skip('computes any', () => {
-    expect(mx.any(new mx.array([false, false, true])).item()).toBe(true);
-    expect(mx.any(new mx.array([false, false, false])).item()).toBe(false);
+  it('computes any', () => {
+    expect(mx.any(new mx.array([0, 0, 1], 'bool')).item()).toBe(true);
+    expect(mx.any(new mx.array([0, 0, 0], 'bool')).item()).toBe(false);
   });
 });
 
@@ -409,25 +408,34 @@ describe('Stacking and Concatenation', () => {
 });
 
 describe('Random', () => {
-  // TODO: Random API signatures need verification
-  it.skip('generates uniform random numbers', () => {
-    const a = mx.random.uniform(0, 1, [100]);
+  it('generates uniform random numbers', () => {
+    // Note: uniform takes just shape, returns [0, 1)
+    const a = mx.random.uniform([100]);
     expect(a.shape).toEqual([100]);
+    const list = a.tolist();
+    expect(list.every((x: number) => x >= 0 && x < 1)).toBe(true);
   });
 
-  it.skip('generates normal random numbers', () => {
+  it('generates normal random numbers', () => {
     const a = mx.random.normal([1000]);
     expect(a.shape).toEqual([1000]);
+    // Mean should be close to 0
+    const mean = mx.mean(a).item();
+    expect(Math.abs(mean)).toBeLessThan(0.2);
   });
 
   it.skip('generates random integers', () => {
+    // TODO: randint API needs investigation
     const a = mx.random.randint(0, 10, [100]);
     expect(a.shape).toEqual([100]);
   });
 
   it('sets seed', () => {
-    // At least seed should work
     mx.random.seed(42);
+    const a = mx.random.uniform([5]);
+    mx.random.seed(42);
+    const b = mx.random.uniform([5]);
+    expect(mx.array_equal(a, b).item()).toBe(true);
   });
 });
 
