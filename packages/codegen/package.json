@@ -26,7 +26,7 @@
     "convert-tests": "node dist/test-converter/index.js"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0"
+    "@types/node": "^25.6.0"
   },
   "files": [
     "dist",
